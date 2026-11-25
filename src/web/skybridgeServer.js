@@ -238,6 +238,93 @@ function listWorkspaceEntries(workspaceRoot, relDir, query = '') {
     entries.sort((a, b) => (a.type === b.type ? a.path.localeCompare(b.path) : a.type === 'dir' ? -1 : 1));
     return entries;
 }
+const MUTATING_FILE_TOOLS = new Set([
+    'fs_write', 'fs_edit', 'multi_edit', 'apply_patch', 'fs_delete', 'fs_move',
+    'write_file', 'edit_file', 'write', 'edit', 'multiedit', 'replace_file_content',
+    'multi_replace_file_content', 'write_to_file', 'create_file', 'document_forge', 'ui_forge'
+]);
+function normalizeWorkspaceRelCandidate(workspaceRoot, raw) {
+    if (typeof raw !== 'string')
+        return null;
+    const trimmed = raw.trim().replace(/^["'`]+|["'`]+$/g, '');
+    if (!trimmed || trimmed.includes('\0') || trimmed.length > 400)
+        return null;
+    if (/^https?:\/\//i.test(trimmed))
+        return null;
+    let rel = trimmed;
+    if (path.isAbsolute(trimmed)) {
+        const absNorm = path.resolve(trimmed);
+        if (!isPhysicalPathAllowed(absNorm, [workspaceRoot], false))
+            return null;
+        rel = path.relative(workspaceRoot, absNorm);
+    }
+    const abs = resolveWorkspaceRelativePath(workspaceRoot, rel);
+    if (!abs)
+        return null;
+    const normalized = path.relative(workspaceRoot, abs).split(path.sep).join('/');
+    return normalized && !normalized.startsWith('..') ? normalized : null;
+}
+function extractPatchPathsFromText(patchText) {
+    const found = [];
+    for (const line of patchText.split(/\r?\n/)) {
+        const m = line.match(/^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s+(.+)$/);
+        if (m?.[1])
+            found.push(m[1].trim());
+        const diffM = line.match(/^(?:\+\+\+|---)\s+[ab]\/(.+)$/);
+        if (diffM?.[1])
+            found.push(diffM[1].trim());
+    }
+    return found;
+}
+export function extractSessionTouchedFiles(messages, workspaceRoot) {
+    const touched = new Set();
+    const addCandidate = (raw) => {
+        const norm = normalizeWorkspaceRelCandidate(workspaceRoot, raw);
+        if (norm)
+            touched.add(norm);
+    };
+    for (const msg of messages) {
+        const toolCalls = Array.isArray(msg.tool_calls)
+            ? msg.tool_calls
+            : [];
+        for (const tc of toolCalls) {
+            const fn = (tc.function && typeof tc.function === 'object' ? tc.function : tc);
+            const name = typeof fn.name === 'string' ? fn.name.trim().toLowerCase() : '';
+            if (!name || !MUTATING_FILE_TOOLS.has(name))
+                continue;
+            let args = null;
+            if (typeof fn.arguments === 'string') {
+                try {
+                    const parsed = JSON.parse(fn.arguments);
+                    if (parsed && typeof parsed === 'object')
+                        args = parsed;
+                }
+                catch {
+                    args = null;
+                }
+            }
+            else if (fn.arguments && typeof fn.arguments === 'object') {
+                args = fn.arguments;
+            }
+            if (!args)
+                continue;
+            for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'target_path', 'filename', 'file', 'destination', 'outputFile', 'output_path']) {
+                addCandidate(args[key]);
+            }
+            if (typeof args.patch === 'string') {
+                for (const p of extractPatchPathsFromText(args.patch))
+                    addCandidate(p);
+            }
+            if (Array.isArray(args.edits)) {
+                for (const ed of args.edits) {
+                    if (ed && typeof ed === 'object')
+                        addCandidate(ed.path);
+                }
+            }
+        }
+    }
+    return [...touched].sort();
+}
 function extractSessionDisplayMessages(messages) {
     const out = [];
     for (const msg of messages) {
@@ -384,6 +471,20 @@ export async function startSkybridgeServer(options = {}) {
     });
     let activeLoop = null;
     let taskCounter = 0;
+    const sessionTouchedFilesMap = new Map();
+    const recordSessionTouchedFile = (sessionId, rawPath) => {
+        if (!sessionId || !SAFE_SESSION_ID_RE.test(sessionId))
+            return;
+        const norm = normalizeWorkspaceRelCandidate(workspaceRoot, rawPath);
+        if (!norm)
+            return;
+        let set = sessionTouchedFilesMap.get(sessionId);
+        if (!set) {
+            set = new Set();
+            sessionTouchedFilesMap.set(sessionId, set);
+        }
+        set.add(norm);
+    };
     let browserControlOwner = 'human';
     let browserAgentActivity = {
         active: false,
@@ -608,6 +709,9 @@ export async function startSkybridgeServer(options = {}) {
                     return;
                 }
                 if (req.method === 'GET') {
+                    const persistedTouched = extractSessionTouchedFiles(existing.messages, workspaceRoot);
+                    const liveTouched = [...(sessionTouchedFilesMap.get(existing.id) ?? [])];
+                    const touchedFiles = [...new Set([...persistedTouched, ...liveTouched])].sort();
                     sendJson(res, 200, {
                         ok: true,
                         session: {
@@ -616,7 +720,8 @@ export async function startSkybridgeServer(options = {}) {
                             createdAt: existing.createdAt,
                             updatedAt: existing.updatedAt,
                             messageCount: existing.messages.length,
-                            messages: extractSessionDisplayMessages(existing.messages)
+                            messages: extractSessionDisplayMessages(existing.messages),
+                            touchedFiles
                         }
                     });
                     return;
@@ -704,42 +809,106 @@ export async function startSkybridgeServer(options = {}) {
                     return;
                 }
                 atomicWriteFileSync(abs, content);
+                if (typeof body.sessionId === 'string') {
+                    recordSessionTouchedFile(body.sessionId.trim(), relNormalized);
+                }
                 auditLog.log({ event: 'skybridge_file_write', path: relNormalized, bytes: byteCount });
                 sendJson(res, 200, { ok: true, path: relNormalized, bytes: byteCount });
                 return;
             }
             if (req.method === 'GET' && pathname === '/api/diff') {
                 const staged = parsedUrl.searchParams.get('staged') === '1';
+                const rawSessionId = (parsedUrl.searchParams.get('sessionId') || '').trim();
+                const sessionId = SAFE_SESSION_ID_RE.test(rawSessionId) ? rawSessionId : '';
+                const rawScope = (parsedUrl.searchParams.get('scope') || '').trim().toLowerCase();
+                const scope = rawScope === 'session' && sessionId ? 'session' : 'workspace';
+                const sessionTouchedSet = new Set();
+                if (sessionId) {
+                    const sess = getSession(sessionId);
+                    if (sess && workspaceMatchesSession(sess.workspace, workspaceRoot)) {
+                        for (const p of extractSessionTouchedFiles(sess.messages, workspaceRoot)) {
+                            sessionTouchedSet.add(p);
+                        }
+                    }
+                    for (const p of sessionTouchedFilesMap.get(sessionId) ?? []) {
+                        sessionTouchedSet.add(p);
+                    }
+                }
                 try {
                     const report = collectWorkingTreeDiff(workspaceRoot, { staged });
+                    const mappedWorkspaceFiles = report.files.slice(0, 60).map((f) => ({
+                        path: f.displayPath,
+                        status: f.status,
+                        additions: f.additions,
+                        deletions: f.deletions,
+                        inGitDiff: true,
+                        hunks: f.hunks.slice(0, 20).map((h) => ({
+                            header: h.header,
+                            lines: h.lines.slice(0, 200)
+                        }))
+                    }));
+                    const matchedSessionGitFiles = mappedWorkspaceFiles.filter((f) => sessionTouchedSet.has(f.path));
+                    const matchedPaths = new Set(matchedSessionGitFiles.map((f) => f.path));
+                    const committedOrUntrackedSessionFiles = [];
+                    for (const rel of [...sessionTouchedSet].sort()) {
+                        if (matchedPaths.has(rel))
+                            continue;
+                        const abs = resolveWorkspaceRelativePath(workspaceRoot, rel);
+                        const exists = Boolean(abs && fs.existsSync(abs));
+                        committedOrUntrackedSessionFiles.push({
+                            path: rel,
+                            status: exists ? 'modified' : 'deleted',
+                            additions: 0,
+                            deletions: 0,
+                            inGitDiff: false,
+                            note: exists ? 'No uncommitted git diff (committed or clean on disk)' : 'File no longer exists on disk',
+                            hunks: []
+                        });
+                    }
+                    const sessionFiles = [...matchedSessionGitFiles, ...committedOrUntrackedSessionFiles];
+                    const returnedFiles = scope === 'session' ? sessionFiles : mappedWorkspaceFiles;
+                    const totalAdditions = scope === 'session'
+                        ? returnedFiles.reduce((sum, f) => sum + f.additions, 0)
+                        : report.totalAdditions;
+                    const totalDeletions = scope === 'session'
+                        ? returnedFiles.reduce((sum, f) => sum + f.deletions, 0)
+                        : report.totalDeletions;
                     sendJson(res, 200, {
                         ok: true,
                         isGitRepo: true,
+                        scope,
+                        sessionId: sessionId || null,
                         staged: report.staged,
-                        totalAdditions: report.totalAdditions,
-                        totalDeletions: report.totalDeletions,
+                        workspaceFileCount: mappedWorkspaceFiles.length,
+                        sessionFileCount: sessionFiles.length,
+                        totalAdditions,
+                        totalDeletions,
                         truncated: report.truncated,
-                        files: report.files.slice(0, 60).map((f) => ({
-                            path: f.displayPath,
-                            status: f.status,
-                            additions: f.additions,
-                            deletions: f.deletions,
-                            hunks: f.hunks.slice(0, 20).map((h) => ({
-                                header: h.header,
-                                lines: h.lines.slice(0, 200)
-                            }))
-                        }))
+                        files: returnedFiles
                     });
                 }
                 catch {
+                    const fallbackSessionFiles = [...sessionTouchedSet].sort().map((rel) => ({
+                        path: rel,
+                        status: 'modified',
+                        additions: 0,
+                        deletions: 0,
+                        inGitDiff: false,
+                        note: 'Touched in this conversation (not a Git repository)',
+                        hunks: []
+                    }));
                     sendJson(res, 200, {
                         ok: true,
                         isGitRepo: false,
+                        scope,
+                        sessionId: sessionId || null,
                         staged,
+                        workspaceFileCount: 0,
+                        sessionFileCount: fallbackSessionFiles.length,
                         totalAdditions: 0,
                         totalDeletions: 0,
                         truncated: false,
-                        files: []
+                        files: scope === 'session' ? fallbackSessionFiles : []
                     });
                 }
                 return;
@@ -1341,6 +1510,22 @@ export async function startSkybridgeServer(options = {}) {
                         try {
                             const parsed = JSON.parse(raw);
                             const toolLower = typeof parsed.tool === 'string' ? parsed.tool.toLowerCase() : '';
+                            const actionLower = typeof parsed.actionName === 'string' ? parsed.actionName.toLowerCase() : '';
+                            if (boundSession?.id) {
+                                if (parsed.type === 'code_progress' && typeof parsed.path === 'string') {
+                                    recordSessionTouchedFile(boundSession.id, parsed.path);
+                                }
+                                else if ((parsed.type === 'step_complete' || parsed.type === 'tool_result')
+                                    && MUTATING_FILE_TOOLS.has(toolLower)
+                                    && parsed.args) {
+                                    for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'filename', 'file', 'destination']) {
+                                        recordSessionTouchedFile(boundSession.id, parsed.args[key]);
+                                    }
+                                }
+                                else if (parsed.type === 'notice' && MUTATING_FILE_TOOLS.has(actionLower) && parsed.detail) {
+                                    recordSessionTouchedFile(boundSession.id, parsed.detail);
+                                }
+                            }
                             const isBrowserTool = toolLower.includes('browser');
                             const isComputerTool = toolLower.includes('computer_use') || toolLower.includes('desktop_act');
                             if ((parsed.type === 'step_start' || parsed.type === 'tool_start') && (isBrowserTool || isComputerTool)) {

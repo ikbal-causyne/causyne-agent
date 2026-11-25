@@ -566,6 +566,50 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.ok(Array.isArray(cliModelsBody.tabs?.free));
       assert.ok(cliModelsBody.tabs.byok.some((it: any) => typeof it.category === 'string' && it.category.startsWith('BYOK · ')));
       assert.ok(cliModelsBody.tabs.free.some((it: any) => it.label === 'openrouter/free'));
+
+      // Panel resize must never hard-lock inline flexBasis (prevents close-after-stretch regression)
+      assert.ok(!htmlSource.includes('studioRoot.style.flexBasis = nextW'), 'panel resize must use --studio-w CSS variable, not inline flexBasis');
+      assert.match(htmlSource, /toggleStudioMaximize/);
+      assert.match(htmlSource, /saveCurrentSessionWorkspace/);
+      assert.match(htmlSource, /applySessionWorkspace/);
+
+      // Per-session Changes (/api/diff?scope=session&sessionId=...) isolates files between Conversation A and Conversation B
+      const sessARes = await fetch(`${handle.origin}/api/sessions`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Conversation A' })
+      });
+      assert.equal(sessARes.status, 201);
+      const sessA = ((await sessARes.json()) as any).session;
+
+      const sessBRes = await fetch(`${handle.origin}/api/sessions`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Conversation B' })
+      });
+      assert.equal(sessBRes.status, 201);
+      const sessB = ((await sessBRes.json()) as any).session;
+
+      await fetch(`${handle.origin}/api/file`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'alpha.txt', content: 'from A\n', sessionId: sessA.id })
+      });
+      await fetch(`${handle.origin}/api/file`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'beta.txt', content: 'from B\n', sessionId: sessB.id })
+      });
+
+      const diffARes = await fetch(`${handle.origin}/api/diff?scope=session&sessionId=${encodeURIComponent(sessA.id)}`, { headers: authHeaders });
+      assert.equal(diffARes.status, 200);
+      const diffA = await diffARes.json() as any;
+      assert.deepEqual((diffA.files || []).map((f: any) => f.path), ['alpha.txt']);
+
+      const diffBRes = await fetch(`${handle.origin}/api/diff?scope=session&sessionId=${encodeURIComponent(sessB.id)}`, { headers: authHeaders });
+      assert.equal(diffBRes.status, 200);
+      const diffB = await diffBRes.json() as any;
+      assert.deepEqual((diffB.files || []).map((f: any) => f.path), ['beta.txt']);
     } finally {
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });
