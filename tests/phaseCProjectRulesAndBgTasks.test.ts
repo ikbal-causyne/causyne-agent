@@ -19,7 +19,7 @@ const nativeRealpath = (p: string): string =>
 const TMP_ROOT = nativeRealpath(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-phasec-rules-')));
 
 after(() => {
-  backgroundTaskManager.stopAll();
+  backgroundTaskManager.stopAll(true);
   try {
     fs.rmSync(TMP_ROOT, { recursive: true, force: true });
   } catch { /* ignore */ }
@@ -115,7 +115,7 @@ describe('Phase C-Core — Hierarchical Project Rules & Managed Background Tasks
     const longStart = await backgroundTaskTool.execute({
       action: 'start',
       label: 'sleeper',
-      command: `${JSON.stringify(process.execPath)} -e "setTimeout(() => {}, 60000)"`
+      command: `${JSON.stringify(process.execPath)} -e "setTimeout(() => {}, 15000)"`
     }, { workspaceRoot: ws });
     assert.equal(longStart.success, true);
     const longId = JSON.parse(longStart.output || '{}').taskId;

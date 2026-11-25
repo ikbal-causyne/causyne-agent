@@ -125,6 +125,9 @@ export class BackgroundTaskManager {
       windowsHide: true,
       ...(isWin && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
     });
+    // Background tasks are non-interactive; closing stdin immediately prevents
+    // sandboxed shells or bwrap supervisors from blocking on stdin EOF.
+    try { proc.stdin.end(); } catch { /* ignore */ }
 
     const record: ManagedTaskRecord = {
       taskId,
@@ -161,13 +164,25 @@ export class BackgroundTaskManager {
     proc.stdout.on('data', append);
     proc.stderr.on('data', append);
 
+    let finalized = false;
     const finalize = (code: number | null, sig: NodeJS.Signals | null): void => {
+      if (finalized) return;
+      finalized = true;
+      const wasStopped = record.status === 'stopped';
       if (record.status === 'running') {
         record.status = code === 0 ? 'completed' : 'failed';
       }
       record.exitCode = code;
       record.signal = sig;
       record.endedAt = new Date().toISOString();
+      if (wasStopped) {
+        // Ensure any remaining process-group sibling (e.g. Linux bwrap inner init)
+        // is terminated and stdio pipes are closed so the parent event loop cannot hang.
+        this.signalProcessTree(record, 'SIGKILL', false);
+        try { proc.stdin?.destroy(); } catch { /* ignore */ }
+        try { proc.stdout?.destroy(); } catch { /* ignore */ }
+        try { proc.stderr?.destroy(); } catch { /* ignore */ }
+      }
       record.proc = null;
       const waiters = record.waiters.splice(0);
       for (const wake of waiters) wake();
@@ -178,7 +193,12 @@ export class BackgroundTaskManager {
       append(Buffer.from(`\n[process error] ${err.message}\n`, 'utf8'));
       finalize(1, null);
     });
-    proc.on('exit', (code, sig) => finalize(code, sig));
+    proc.on('close', (code, sig) => finalize(code, sig));
+    proc.on('exit', (code, sig) => {
+      if (record.status === 'stopped') {
+        finalize(code, sig);
+      }
+    });
 
     this.tasks.set(taskId, record);
     return this.toSnapshot(record);
@@ -280,15 +300,22 @@ export class BackgroundTaskManager {
       rec.status = 'stopped';
       const procRef = rec.proc;
       try { procRef.stdin?.end(); } catch { /* ignore */ }
+      const forceCleanup = (): void => {
+        this.signalProcessTree(rec, 'SIGKILL', Boolean(options.force));
+        try { procRef.kill('SIGKILL'); } catch { /* ignore */ }
+        try { procRef.stdin?.destroy(); } catch { /* ignore */ }
+        try { procRef.stdout?.destroy(); } catch { /* ignore */ }
+        try { procRef.stderr?.destroy(); } catch { /* ignore */ }
+      };
       if (options.force) {
-        this.signalProcessTree(rec, 'SIGKILL', true);
+        forceCleanup();
       } else {
         this.signalProcessTree(rec, 'SIGTERM', false);
         const killTimer = setTimeout(() => {
-          if (procRef.exitCode === null && procRef.signalCode === null) {
-            this.signalProcessTree(rec, 'SIGKILL', false);
+          if (rec.proc === procRef || (procRef.exitCode === null && procRef.signalCode === null)) {
+            forceCleanup();
           }
-        }, 1500);
+        }, 750);
         killTimer.unref?.();
       }
       if (typeof procRef.unref === 'function') {
