@@ -18,6 +18,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview, resolveAvailableProvidersOverview, pickDefaultPeerModel } from './dynamicCatalogue.js';
 import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
+import { formatRedactedProviderErrorReport, getRecentProviderDiagnostics } from './providers/byokHttp.js';
 import { listSessions, getActiveSessionId, renameSession, getSession } from './sessionStore.js';
 import { serverStatus, grantServer, revokeServer, addServer, removeServer, connectServer, disconnectServer, refreshServer } from './mcp/mcpRegistry.js';
 import { analyzeFiles, formatFindings } from './slopDetector.js';
@@ -2472,11 +2473,20 @@ export const COMMANDS = [
         name: 'doctor',
         aliases: ['health', 'diagnostics'],
         scope: 'local',
-        usage: '/doctor',
-        description: 'Run environment, provider, and tool health diagnostics',
+        usage: '/doctor [--report]',
+        description: 'Run environment, provider, and tool health diagnostics (use --report for redacted HTTP errors)',
         dialogTitle: 'Doctor',
-        run: async (_argv, ctx = {}) => {
+        run: async (argv, ctx = {}) => {
             const config = loadConfig();
+            const wantsReport = Array.isArray(argv)
+                && argv.some((tok) => tok === '--report' || tok === 'report' || tok === '--errors');
+            if (wantsReport) {
+                return ok(formatRedactedProviderErrorReport({
+                    provider: config.provider,
+                    model: config.model,
+                    causyneVersion: getPackageVersion()
+                }));
+            }
             const lines = ['Causyne Health & Diagnostics', ''];
             const nodeVer = process.version;
             const nodeOk = parseInt(nodeVer.slice(1).split('.')[0] || '0', 10) >= 24;
@@ -2521,6 +2531,11 @@ export const COMMANDS = [
                     const icon = z.readiness === 'ready' ? '✓' : '△';
                     lines.push(`  ${icon} ${safeDisplay(z.label)} [${safeDisplay(z.provider)}${z.model ? ` / ${safeDisplay(z.model)}` : ''}] — ${safeDisplay(z.readiness)}`);
                 }
+            }
+            const recentHttpErrors = getRecentProviderDiagnostics();
+            if (recentHttpErrors.length > 0) {
+                lines.push('');
+                lines.push(`Recent Provider HTTP Errors: ${recentHttpErrors.length} recorded (run \`/doctor --report\` for a redacted diagnostic report).`);
             }
             lines.push('');
             lines.push('All diagnostic invariants passed. Run /peers detect or /model list for component details.');

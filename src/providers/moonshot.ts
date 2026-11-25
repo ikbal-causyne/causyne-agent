@@ -19,7 +19,7 @@ export class MoonshotProvider extends LLMProvider {
     this.baseUrl = customUrl || 'https://api.moonshot.ai/v1/chat/completions';
     this.allowInsecureHttp = config.allowInsecureHttp === true;
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['moonshot']) || '');
-    this.visionModels = ['kimi-k3', 'kimi-k2.5', 'vision'];
+    this.visionModels = ['k3', 'kimi-k3', 'kimi-k2.5', 'vision'];
     this.audioModels = [];
     this.preserveReasoningContent = true;
   }
@@ -28,7 +28,8 @@ export class MoonshotProvider extends LLMProvider {
     const apiKey = requireApiKey(this.apiKey, 'Moonshot AI (Kimi)');
     const sanitizedMessages = this.prepareMessages(messages);
 
-    const isThinkingModel = (this.model || '').trim().toLowerCase().includes('-thinking');
+    const loweredModel = (this.model || '').trim().toLowerCase();
+    const isThinkingModel = loweredModel.includes('-thinking') || loweredModel.startsWith('k3.1-pro');
     const payload: Record<string, any> = {
       model: this.model,
       messages: sanitizedMessages
@@ -65,7 +66,21 @@ export class MoonshotProvider extends LLMProvider {
       providerLabel: 'Moonshot AI',
       secrets: [apiKey],
       hasApiKey: true,
-      allowInsecureHttp: this.allowInsecureHttp
+      allowInsecureHttp: this.allowInsecureHttp,
+      onHttpError: ({ status }: { status: number }) => {
+        let host = '';
+        try { host = new URL(endpoint).hostname.toLowerCase(); } catch { host = ''; }
+        if (status === 401 && (host === 'api.moonshot.ai' || host === 'api.moonshot.cn')) {
+          const isGlobal = host === 'api.moonshot.ai';
+          const altUrl = isGlobal
+            ? 'https://api.moonshot.cn/v1/chat/completions'
+            : 'https://api.moonshot.ai/v1/chat/completions';
+          throw new Error(
+            `Moonshot AI (Kimi) authentication failed (HTTP 401) against ${host}. ` +
+            `If your API key belongs to the ${isGlobal ? 'China Mainland (.cn)' : 'Global (.ai)'} region, run \`causyne config\` and set Custom Base URL to: ${altUrl}`
+          );
+        }
+      }
     };
 
     const data = wantsStreaming(options)

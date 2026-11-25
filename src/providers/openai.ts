@@ -43,4 +43,10 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
       return false;
     }
   }
+
+  override supportsReasoningEffort(): boolean {
+    const lowered = (this.model || '').trim().toLowerCase();
+    return (/^o[134](?:$|[-.])/.test(lowered) || /^gpt-[56](?:$|[-.])/.test(lowered))
+      && !lowered.includes('-chat');
+  }
 }

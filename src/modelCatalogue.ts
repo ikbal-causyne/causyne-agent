@@ -26,48 +26,57 @@ export const PEER_MODEL_CATALOGUE: Record<string, string[]> = {
  * The label keys are a stable configuration format, not display sugar.
  */
 export const MODEL_CATALOGUE: Record<string, string[]> = {
-  'DeepSeek': ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro', 'deepseek-v4-flash'],
+  'DeepSeek': ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
   'Qwen': [
-    'qwen2.5-coder-32b-instruct',
-    'qwen2.5-72b-instruct',
-    'qwen-max',
-    'qwen-plus',
-    'qwen-turbo',
+    'qwen3-coder-flash',
+    'qwen3.8-max',
+    'qwen3.8-flash',
     'qwen3.7-max',
     'qwen3.7-plus',
-    'qwen3.6-flash'
+    'qwen-plus',
+    'qwen-max',
+    'qwen-turbo',
+    'qwen2.5-coder-32b-instruct',
+    'qwen2.5-72b-instruct'
   ],
   'Anthropic': [
-    'claude-3-7-sonnet',
-    'claude-3-5-sonnet',
-    'claude-3-5-haiku',
-    'claude-3-opus',
+    'claude-sonnet-5-5',
+    'claude-opus-5-5',
+    'claude-haiku-5-5',
+    'claude-fable-5-2',
     'claude-fable-5-1',
     'claude-opus-5',
     'claude-opus-4-8',
     'claude-sonnet-5',
-    'claude-haiku-4-5'
+    'claude-haiku-4-5',
+    'claude-3-7-sonnet',
+    'claude-3-5-sonnet',
+    'claude-3-5-haiku',
+    'claude-3-opus'
   ],
   'OpenAI': [
-    'gpt-4o',
-    'gpt-4o-mini',
-    'o3-mini',
-    'o1',
+    'gpt-6.1-sol',
     'gpt-6-astra',
+    'gpt-6.1-terra',
+    'gpt-6-luna',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
-    'gpt-5.4-mini'
+    'gpt-5.4-mini',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'o3-mini',
+    'o1'
   ],
   'Gemini': [
+    'gemini-4-argon',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
     'gemini-2.5-pro',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite',
     'gemini-2.0-flash',
-    'gemini-1.5-pro',
-    'gemini-1.5-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
     'gemini-3.1-pro',
     'gemini-3.1-flash-lite'
   ],
@@ -80,13 +89,22 @@ export const MODEL_CATALOGUE: Record<string, string[]> = {
   ],
   'Ollama (Local)': ['llama3.3', 'qwen2.5-coder', 'deepseek-r1', 'llama3', 'mistral', 'gemma2', 'custom'],
   'Alibaba (DashScope)': [
-    'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-coder-32b-instruct',
-    'qwen3.7-max', 'qwen3.7-plus', 'kimi-k2.7-code', 'kimi-k2.6',
-    'kimi-k2.5', 'kimi-k2-thinking', 'Moonshot-Kimi-K2-Instruct',
-    'deepseek-v4-flash', 'deepseek-v4-pro'
+    'qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-coder-flash', 'qwen2.5-coder-32b-instruct',
+    'qwen3.8-max', 'qwen3.8-flash', 'qwen3.7-max', 'qwen3.7-plus',
+    'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5', 'kimi-k2-thinking',
+    'Moonshot-Kimi-K2-Instruct', 'deepseek-flash', 'deepseek-v4-pro'
   ],
-  'Moonshot (Kimi)': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
-  'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest'],
+  'Moonshot (Kimi)': [
+    'k3.1-pro',
+    'k3.1-pro-highspeed',
+    'k3',
+    'kimi-for-coding',
+    'kimi-for-coding-highspeed',
+    'kimi-k3',
+    'kimi-k2.7-code',
+    'kimi-k2.6'
+  ],
+  'xAI (Grok)': ['grok-4.7', 'grok-4.6', 'grok-420-reasoning', 'grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-latest'],
   'Google Antigravity': [
     'Gemini 3.8 Flash (Low)',
     'Gemini 3.8 Flash (Medium)',
@@ -131,16 +149,16 @@ export const MODEL_CATALOGUE: Record<string, string[]> = {
 export const PROVIDER_LABELS: string[] = Object.keys(MODEL_CATALOGUE);
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  deepseek: 'deepseek-chat',
+  deepseek: 'deepseek-flash',
   qwen: 'qwen2.5-coder-32b-instruct',
   'dashscope-byok': 'qwen-plus',
   dashscope: 'qwen-plus',
   muse: 'muse-spark-1.3',
-  anthropic: 'claude-3-7-sonnet',
+  anthropic: 'claude-sonnet-5-5',
   openai: 'gpt-4o',
   gemini: 'gemini-2.5-pro',
   'gemini-free': 'gemini-2.5-flash',
-  moonshot: 'kimi-k3',
+  moonshot: 'k3.1-pro',
   xai: 'grok-3',
   ollama: 'llama3.3',
   acp: 'opencode',
@@ -164,13 +182,13 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
 };
 
 export const UTILITY_MODEL_BY_PROVIDER: Record<string, string> = {
-  deepseek: 'deepseek-v4-flash',
-  qwen: 'qwen3.6-flash',
-  dashscope: 'qwen3.6-flash',
-  'dashscope-byok': 'qwen3.6-flash',
-  anthropic: 'claude-haiku-4-5',
+  deepseek: 'deepseek-flash',
+  qwen: 'qwen3.8-flash',
+  dashscope: 'qwen3.8-flash',
+  'dashscope-byok': 'qwen3.8-flash',
+  anthropic: 'claude-haiku-5-5',
   openai: 'gpt-5.4-mini',
-  gemini: 'gemini-3.1-flash-lite',
+  gemini: 'gemini-3.5-flash-lite',
   'gemini-free': 'gemini-2.5-flash-lite',
   openrouter: 'openrouter/free',
   groq: 'llama-3.1-8b-instant',

@@ -20,6 +20,7 @@ import {
   ProviderHttpError,
   parseRetryAfterMs,
   readBoundedResponseText,
+  recordProviderDiagnostic,
   redactProviderSecrets,
   safeProviderFetch,
   type SafeProviderFetchJsonOptions
@@ -86,6 +87,13 @@ function buildMidStreamError(
   }
 
   if (status !== null) {
+    recordProviderDiagnostic({
+      providerLabel,
+      status,
+      code: errType || undefined,
+      errorText: cleanMsg,
+      secrets
+    });
     return new ProviderHttpError(`${providerLabel} stream error (${status}): ${cleanMsg}`, {
       status,
       code: errType || undefined
@@ -111,6 +119,15 @@ async function openHardenedStream(
       ).catch(() => '');
       const cleanError = redactProviderSecrets(rawError, options.secrets);
       const retryAfterMs = parseRetryAfterMs(getHeader(response, 'retry-after') || null);
+
+      recordProviderDiagnostic({
+        providerLabel: options.providerLabel,
+        url: options.url,
+        status: response.status,
+        retryAfterMs,
+        errorText: cleanError,
+        secrets: options.secrets
+      });
 
       if (options.onHttpError) {
         options.onHttpError({

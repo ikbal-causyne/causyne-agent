@@ -15,6 +15,66 @@ export const MAX_PROVIDER_JSON_BYTES = 32 * 1024 * 1024;
 export const MAX_PROVIDER_ERROR_BYTES = 64 * 1024;
 export const MAX_PROVIDER_ERROR_CHARS = 2_048;
 export const MAX_SSE_BUFFER_BYTES = 4 * 1024 * 1024;
+const MAX_PROVIDER_DIAGNOSTICS = 12;
+const recentProviderDiagnostics = [];
+export function sanitizeEndpointForDiagnostics(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    }
+    catch {
+        return '[invalid-endpoint]';
+    }
+}
+export function recordProviderDiagnostic(entry) {
+    const snapshot = {
+        timestamp: new Date().toISOString(),
+        providerLabel: safeDisplay(entry.providerLabel || 'Unknown Provider'),
+        endpointHostPath: entry.url ? sanitizeEndpointForDiagnostics(entry.url) : '[unspecified]',
+        status: Number.isFinite(entry.status) ? Math.floor(entry.status) : 0,
+        ...(entry.retryAfterMs !== undefined ? { retryAfterMs: entry.retryAfterMs } : {}),
+        ...(entry.code ? { code: safeDisplay(entry.code) } : {}),
+        errorPreview: redactProviderSecrets(entry.errorText || '', entry.secrets).slice(0, 600)
+    };
+    recentProviderDiagnostics.push(snapshot);
+    if (recentProviderDiagnostics.length > MAX_PROVIDER_DIAGNOSTICS) {
+        recentProviderDiagnostics.splice(0, recentProviderDiagnostics.length - MAX_PROVIDER_DIAGNOSTICS);
+    }
+    return snapshot;
+}
+export function getRecentProviderDiagnostics() {
+    return [...recentProviderDiagnostics];
+}
+export function clearProviderDiagnostics() {
+    recentProviderDiagnostics.length = 0;
+}
+export function formatRedactedProviderErrorReport(options = {}) {
+    const lines = [
+        'Causyne Redacted Provider HTTP Error Report (0 secrets included)',
+        `  Timestamp : ${new Date().toISOString()}`,
+        `  Runtime   : Node ${process.version} · ${process.platform} (${process.arch})`,
+        ...(options.causyneVersion ? [`  Causyne   : ${safeDisplay(options.causyneVersion)}`] : []),
+        ...(options.provider || options.model
+            ? [`  Active    : ${safeDisplay(options.provider || 'unconfigured')} / ${safeDisplay(options.model || 'default')}`]
+            : []),
+        ''
+    ];
+    if (recentProviderDiagnostics.length === 0) {
+        lines.push('No provider HTTP errors have been recorded in this session.');
+        return lines.join('\n');
+    }
+    lines.push(`Recent Provider HTTP Errors (${recentProviderDiagnostics.length}):`);
+    for (const item of recentProviderDiagnostics) {
+        lines.push(`  • [${item.timestamp}] ${item.providerLabel} — HTTP ${item.status}`
+            + (item.code ? ` (${item.code})` : '')
+            + (item.retryAfterMs ? ` · Retry-After ${Math.ceil(item.retryAfterMs / 1000)}s` : ''));
+        lines.push(`    Endpoint : ${item.endpointHostPath}`);
+        if (item.errorPreview) {
+            lines.push(`    Detail   : ${item.errorPreview.replace(/\r?\n+/g, ' ')}`);
+        }
+    }
+    return lines.join('\n');
+}
 export class ProviderHttpError extends Error {
     status;
     retryAfterMs;
@@ -400,6 +460,14 @@ export async function safeProviderFetchJson(options) {
             const rawError = await readBoundedResponseText(response, options.maxErrorBytes ?? MAX_PROVIDER_ERROR_BYTES, { truncate: true, label: options.providerLabel }).catch(() => '');
             const cleanError = redactProviderSecrets(rawError, options.secrets);
             const retryAfterMs = parseRetryAfterMs(getHeaderCaseInsensitive(response, 'retry-after'));
+            recordProviderDiagnostic({
+                providerLabel: options.providerLabel,
+                url: options.url,
+                status: response.status,
+                retryAfterMs,
+                errorText: cleanError,
+                secrets: options.secrets
+            });
             if (options.onHttpError) {
                 options.onHttpError({
                     status: response.status,

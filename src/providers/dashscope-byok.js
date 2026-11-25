@@ -71,15 +71,25 @@ export class DashscopeByokProvider extends LLMProvider {
             hasApiKey: true,
             allowInsecureHttp: this.allowInsecureHttp,
             onHttpError: ({ status }) => {
-                let hostHasWorkspace = false;
+                let host = '';
                 try {
-                    hostHasWorkspace = new URL(endpoint).hostname.includes('ws-');
+                    host = new URL(endpoint).hostname.toLowerCase();
                 }
                 catch {
-                    hostHasWorkspace = false;
+                    host = '';
                 }
+                const hostHasWorkspace = host.includes('ws-');
                 if (status === 401 && apiKey.startsWith('sk-ws-') && !hostHasWorkspace) {
                     throw new Error('\n[QWEN WORKSPACE CONFIGURATION ERROR]\n\nYou are using a Workspace-bound API Key (starts with sk-ws-), but you have not configured your Workspace Base URL.\n\nAlibaba requires a specific URL for these keys.\n\nHOW TO FIX THIS:\n1. Open your computer terminal.\n2. Run command: causyne config\n3. When asked for Custom Base URL, paste your Workspace URL from Alibaba (e.g. https://{Your-Workspace-ID}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions).\n\nAlternatively, use a Standard API Key (starts with sk-) which does not require a custom URL.');
+                }
+                if (status === 401 && (host === 'dashscope-intl.aliyuncs.com' || host === 'dashscope.aliyuncs.com')) {
+                    const isIntl = host === 'dashscope-intl.aliyuncs.com';
+                    const altRegion = isIntl ? 'China Mainland (Beijing)' : 'International (Singapore)';
+                    const altUrl = isIntl
+                        ? 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
+                        : 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions';
+                    throw new Error(`Qwen DashScope authentication failed (HTTP 401) against ${host}. ` +
+                        `If your API key was created in Alibaba Cloud ${altRegion}, run \`causyne config\` and set Custom Base URL to: ${altUrl}`);
                 }
             }
         };

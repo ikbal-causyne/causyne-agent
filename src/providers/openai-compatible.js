@@ -2,9 +2,20 @@ import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
-import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
-import { isLoopbackHost, requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
+import { normalizeMessagesForMistral, normalizeOpenAIChatChoiceResponse, toMistralToolCallId } from './wireNormalizer.js';
+import { isLoopbackHost, ProviderHttpError, requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
+export function isMistralEndpoint(endpoint, providerLabel = '') {
+    if (providerLabel.trim().toLowerCase() === 'mistral')
+        return true;
+    try {
+        const host = new URL(endpoint).hostname.toLowerCase();
+        return host === 'api.mistral.ai' || host.endsWith('.mistral.ai');
+    }
+    catch {
+        return false;
+    }
+}
 export class OpenAICompatibleProvider extends LLMProvider {
     reasoningEffort;
     allowInsecureHttp;
@@ -42,9 +53,28 @@ export class OpenAICompatibleProvider extends LLMProvider {
     supportsPromptCacheKey() {
         return false;
     }
+    supportsReasoningEffort() {
+        const endpoint = this.baseUrl || 'https://api.openai.com/v1/chat/completions';
+        if (isMistralEndpoint(endpoint, this.providerLabel))
+            return false;
+        const lowered = (this.model || '').trim().toLowerCase();
+        if (!lowered)
+            return false;
+        if (/^(?:o[134]|gpt-[56])(?:$|[-.])/.test(lowered) && !lowered.includes('-chat'))
+            return true;
+        return lowered.includes('gpt-oss')
+            || lowered.includes('qwen3')
+            || lowered.includes('qwen-3')
+            || lowered.includes('qwq')
+            || lowered.includes('deepseek-r1')
+            || lowered.includes('reasoning');
+    }
     async chat(messages, options = {}) {
         const opts = options && typeof options === 'object' ? options : {};
-        const preparedMessages = this.prepareMessages(messages);
+        const endpoint = this.baseUrl || 'https://api.openai.com/v1/chat/completions';
+        const isMistral = isMistralEndpoint(endpoint, this.providerLabel);
+        const preparedBase = this.prepareMessages(messages);
+        const preparedMessages = isMistral ? normalizeMessagesForMistral(preparedBase) : preparedBase;
         const payload = {
             model: this.model,
             messages: preparedMessages
@@ -52,7 +82,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
         if (!this.rejectsSamplingParameters()) {
             payload['temperature'] = resolveTemperature(opts.temperature, 0.1);
         }
-        if (this.reasoningEffort && this.reasoningEffort !== 'off') {
+        if (this.reasoningEffort && this.reasoningEffort !== 'off' && this.supportsReasoningEffort()) {
             payload['reasoning_effort'] = this.reasoningEffort;
         }
         if (typeof opts.maxTokens === 'number' && Number.isFinite(opts.maxTokens) && opts.maxTokens >= 1) {
@@ -84,7 +114,6 @@ export class OpenAICompatibleProvider extends LLMProvider {
             'Content-Type': 'application/json'
         };
         const trimmedKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
-        const endpoint = this.baseUrl || 'https://api.openai.com/v1/chat/completions';
         let isLocalEndpoint = false;
         try {
             isLocalEndpoint = isLoopbackHost(new URL(endpoint).hostname);
@@ -109,24 +138,42 @@ export class OpenAICompatibleProvider extends LLMProvider {
             hasApiKey: Boolean(trimmedKey),
             allowInsecureHttp: this.allowInsecureHttp
         };
-        const data = wantsStreaming(opts)
+        const runRequest = async (reqPayload) => (wantsStreaming(opts)
             ? await streamOpenAICompatibleChat({
                 ...requestOpts,
-                payload,
+                payload: reqPayload,
                 onChunk: opts.onChunk,
                 onReasoningChunk: opts.onReasoningChunk
             })
             : await safeProviderFetchJson({
                 ...requestOpts,
-                body: JSON.stringify(payload)
-            });
+                body: JSON.stringify(reqPayload)
+            }));
+        let data;
+        try {
+            data = await runRequest(payload);
+        }
+        catch (err) {
+            const rejectedReasoningEffort = 'reasoning_effort' in payload
+                && err instanceof ProviderHttpError
+                && err.status === 400
+                && /(?:reasoning_effort|unrecognized|unknown field|extra inputs|not permitted|unsupported parameter)/i.test(err.message);
+            if (!rejectedReasoningEffort)
+                throw err;
+            const fallbackPayload = { ...payload };
+            delete fallbackPayload['reasoning_effort'];
+            data = await runRequest(fallbackPayload);
+        }
         const normalized = normalizeOpenAIChatChoiceResponse(data, {
             prefix: 'call_oai',
             freeFormPaths
         });
+        const finalToolCalls = isMistral && Array.isArray(normalized.toolCalls)
+            ? normalized.toolCalls.map((tc, idx) => ({ ...tc, id: toMistralToolCallId(tc.id, idx) }))
+            : normalized.toolCalls;
         return {
             content: normalized.content,
-            toolCalls: normalized.toolCalls,
+            toolCalls: finalToolCalls,
             reasoningContent: normalized.reasoningContent,
             usage: this.normalizeUsage(normalized.rawUsage)
         };

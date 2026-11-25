@@ -12,7 +12,7 @@
  *   - Graceful fallback when an upstream proxy returns non-streaming JSON
  */
 import { safeParseJsonObject } from './wireNormalizer.js';
-import { MAX_PROVIDER_ERROR_BYTES, MAX_PROVIDER_JSON_BYTES, MAX_SSE_BUFFER_BYTES, ProviderHttpError, parseRetryAfterMs, readBoundedResponseText, redactProviderSecrets, safeProviderFetch } from './byokHttp.js';
+import { MAX_PROVIDER_ERROR_BYTES, MAX_PROVIDER_JSON_BYTES, MAX_SSE_BUFFER_BYTES, ProviderHttpError, parseRetryAfterMs, readBoundedResponseText, recordProviderDiagnostic, redactProviderSecrets, safeProviderFetch } from './byokHttp.js';
 export function wantsStreaming(options) {
     if (!options || typeof options !== 'object')
         return false;
@@ -61,6 +61,13 @@ function buildMidStreamError(providerLabel, errPayload, secrets) {
             status = 500;
     }
     if (status !== null) {
+        recordProviderDiagnostic({
+            providerLabel,
+            status,
+            code: errType || undefined,
+            errorText: cleanMsg,
+            secrets
+        });
         return new ProviderHttpError(`${providerLabel} stream error (${status}): ${cleanMsg}`, {
             status,
             code: errType || undefined
@@ -75,6 +82,14 @@ async function openHardenedStream(options) {
             const rawError = await readBoundedResponseText(response, options.maxErrorBytes ?? MAX_PROVIDER_ERROR_BYTES, { truncate: true, label: options.providerLabel }).catch(() => '');
             const cleanError = redactProviderSecrets(rawError, options.secrets);
             const retryAfterMs = parseRetryAfterMs(getHeader(response, 'retry-after') || null);
+            recordProviderDiagnostic({
+                providerLabel: options.providerLabel,
+                url: options.url,
+                status: response.status,
+                retryAfterMs,
+                errorText: cleanError,
+                secrets: options.secrets
+            });
             if (options.onHttpError) {
                 options.onHttpError({
                     status: response.status,

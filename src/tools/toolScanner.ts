@@ -98,6 +98,16 @@ const META_AND_COMBINATOR_KEYS = new Set([
   'examples'
 ]);
 
+const GEMINI_STRING_FORMATS = new Set(['enum', 'date-time']);
+const GEMINI_NUMBER_FORMATS = new Set(['float', 'double', 'int32', 'int64']);
+
+function isGeminiFormatAllowed(typeVal: unknown, formatVal: unknown): boolean {
+  if (typeof formatVal !== 'string' || !formatVal) return true;
+  if (typeVal === 'string') return GEMINI_STRING_FORMATS.has(formatVal);
+  if (typeVal === 'number' || typeVal === 'integer') return GEMINI_NUMBER_FORMATS.has(formatVal);
+  return false;
+}
+
 const GEMINI_FORBIDDEN_KEYS = new Set([
   ...META_AND_COMBINATOR_KEYS,
   'additionalProperties',
@@ -286,6 +296,16 @@ function inspectSchemaForProvider(
         code: 'GEMINI_NON_STRING_ENUM',
         message: `Non-string enum at '${pathStr}' is rejected by Gemini OpenAPI Schema.`,
         severity: 'warning'
+      });
+    }
+
+    if (typeof schema['format'] === 'string' && !isGeminiFormatAllowed(schema['type'], schema['format'])) {
+      issues.push({
+        tool: toolName,
+        path: pathStr,
+        code: 'GEMINI_UNSUPPORTED_FORMAT',
+        message: `Unsupported format '${schema['format']}' on type '${String(schema['type'] || 'unknown')}' at '${pathStr}' in Gemini OpenAPI Schema.`,
+        severity: 'error'
       });
     }
 
@@ -631,6 +651,15 @@ function compileSchemaNode(
       const allowed = adapted['enum'].map((v) => String(v)).join(', ');
       delete adapted['enum'];
       adapted['description'] = appendDescriptionNote(adapted['description'], ` Allowed values: ${allowed}.`);
+    }
+  }
+
+  // Gemini OpenAPI 3.0 Schema only supports format: enum|date-time on strings and float|double|int32|int64 on numbers
+  if (dialect === 'gemini' && typeof adapted['format'] === 'string' && !isGeminiFormatAllowed(adapted['type'], adapted['format'])) {
+    const fmt = adapted['format'];
+    delete adapted['format'];
+    if (typeof adapted['description'] !== 'string' || !adapted['description'].toLowerCase().includes(fmt.toLowerCase())) {
+      adapted['description'] = appendDescriptionNote(adapted['description'], ` (format: ${fmt})`);
     }
   }
 

@@ -20,7 +20,8 @@ export class XAIProvider extends LLMProvider {
     this.baseUrl = customUrl || 'https://api.x.ai/v1/chat/completions';
     this.allowInsecureHttp = config.allowInsecureHttp === true;
     const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
-    this.reasoningEffort = rawEffort === 'low' || rawEffort === 'high' ? rawEffort : null;
+    const allowedEfforts = new Set(['low', 'medium', 'high', 'xhigh']);
+    this.reasoningEffort = allowedEfforts.has(rawEffort) ? rawEffort : null;
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['xai']) || '');
     this.visionModels = ['grok-4', 'vision'];
     this.audioModels = [];
@@ -36,8 +37,13 @@ export class XAIProvider extends LLMProvider {
       temperature: resolveTemperature(options.temperature, 0.1)
     };
 
-    if (this.reasoningEffort && (this.model || '').toLowerCase().includes('grok-3-mini')) {
-      payload['reasoning_effort'] = this.reasoningEffort;
+    const loweredModel = (this.model || '').toLowerCase();
+    if (this.reasoningEffort) {
+      if (loweredModel.includes('grok-420-reasoning')) {
+        payload['reasoning_effort'] = this.reasoningEffort;
+      } else if (loweredModel.includes('grok-3-mini') && (this.reasoningEffort === 'low' || this.reasoningEffort === 'high')) {
+        payload['reasoning_effort'] = this.reasoningEffort;
+      }
     }
     if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
       payload['max_tokens'] = Math.floor(options.maxTokens);

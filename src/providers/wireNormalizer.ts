@@ -6,6 +6,7 @@
  * lossless universal contract without duplicating normalization code.
  */
 
+import { createHash } from 'node:crypto';
 import {
   normalizeToolName,
   decodeFreeFormArguments
@@ -26,7 +27,70 @@ export interface NormalizedChoiceResult {
 }
 
 const VALID_ID_CHARS = /[^a-zA-Z0-9_-]/g;
+const MISTRAL_TOOL_ID_RE = /^[a-zA-Z0-9]{9}$/;
+const BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 let toolIdSequence = 0;
+
+/**
+ * Map any provider tool-call ID deterministically onto Mistral's strict
+ * 9-character alphanumeric grammar (`^[a-zA-Z0-9]{9}$`).
+ */
+export function toMistralToolCallId(rawId: unknown, fallbackIndex = 0): string {
+  const str = typeof rawId === 'string' ? rawId.trim() : '';
+  if (MISTRAL_TOOL_ID_RE.test(str)) return str;
+  const seed = str || `mistral_fallback_${fallbackIndex}`;
+  const digest = createHash('sha256').update(seed).digest();
+  let out = '';
+  for (let i = 0; i < 9; i++) {
+    out += BASE62_ALPHABET[digest[i]! % BASE62_ALPHABET.length];
+  }
+  return out;
+}
+
+/**
+ * Rewrite `assistant.tool_calls[*].id` and matching `tool.tool_call_id` fields
+ * consistently across a message history so Mistral's `/v1/chat/completions`
+ * endpoint accepts multi-turn tool calls (including after cross-provider switches).
+ */
+export function normalizeMessagesForMistral(messages: any[]): any[] {
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+  const idMap = new Map<string, string>();
+  const usedIds = new Set<string>();
+  let fallbackCounter = 0;
+
+  const mapId = (rawId: unknown): string => {
+    const key = typeof rawId === 'string' ? rawId.trim() : '';
+    if (key && idMap.has(key)) return idMap.get(key)!;
+    let candidate = toMistralToolCallId(key, fallbackCounter++);
+    let salt = 0;
+    while (usedIds.has(candidate)) {
+      candidate = toMistralToolCallId(`${key || 'id'}_${++salt}`, fallbackCounter++);
+    }
+    usedIds.add(candidate);
+    if (key) idMap.set(key, candidate);
+    return candidate;
+  };
+
+  return messages.map((msg) => {
+    if (!msg || typeof msg !== 'object') return msg;
+    if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      return {
+        ...msg,
+        tool_calls: msg.tool_calls.map((tc: any) => {
+          if (!tc || typeof tc !== 'object') return tc;
+          return { ...tc, id: mapId(tc.id) };
+        })
+      };
+    }
+    if (msg.role === 'tool' && typeof msg.tool_call_id === 'string') {
+      return {
+        ...msg,
+        tool_call_id: mapId(msg.tool_call_id)
+      };
+    }
+    return msg;
+  });
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

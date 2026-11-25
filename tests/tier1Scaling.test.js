@@ -20,7 +20,7 @@ test.after(() => { forgetPlans(); });
 test('router: utility work moves to the cheaper tier of the SAME provider', () => {
   const route = resolveRoute({ provider: 'anthropic', model: 'claude-opus-5' }, 'condense');
   assert.equal(route.routed, true);
-  assert.equal(route.model, 'claude-haiku-4-5');
+  assert.equal(route.model, 'claude-haiku-5-5');
   assert.equal(route.provider, 'anthropic', 'a route may never change provider — BYOK is one key');
 });
 
@@ -68,7 +68,7 @@ test('router: routing can be switched off entirely', () => {
 test('router: routedConfig changes the model and nothing else', () => {
   const config = { provider: 'anthropic', model: 'claude-opus-5', apiKey: 'ENC:secret', baseUrl: 'https://x' };
   const { config: routed } = routedConfig(config, 'condense');
-  assert.equal(routed.model, 'claude-haiku-4-5');
+  assert.equal(routed.model, 'claude-haiku-5-5');
   assert.equal(routed.apiKey, config.apiKey, 'the key must survive the route');
   assert.equal(routed.baseUrl, config.baseUrl);
   assert.equal(config.model, 'claude-opus-5', 'the caller\'s config was mutated');

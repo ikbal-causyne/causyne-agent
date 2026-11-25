@@ -13,7 +13,7 @@ export class DeepSeekProvider extends LLMProvider {
         this.baseUrl = customUrl || 'https://api.deepseek.com/v1/chat/completions';
         this.allowInsecureHttp = config.allowInsecureHttp === true;
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['deepseek']) || '');
-        this.visionModels = ['-vl'];
+        this.visionModels = ['-vl', 'deepseek-flash'];
         this.audioModels = [];
         this.preserveReasoningContent = true;
     }

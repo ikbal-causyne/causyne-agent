@@ -9,6 +9,7 @@ import {
   serializeAndDecodeArguments
 } from './wireNormalizer.js';
 import {
+  ProviderHttpError,
   requireApiKey,
   resolveTemperature,
   safeProviderFetchJson
@@ -24,6 +25,7 @@ const PROMPT_CACHE_MODELS: readonly string[] = [
   'claude-mythos-5',
   'claude-opus-5',
   'claude-sonnet-5',
+  'claude-haiku-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
@@ -38,6 +40,7 @@ const TOOL_SEARCH_MODELS: readonly string[] = [
   'claude-mythos-5',
   'claude-opus-5',
   'claude-sonnet-5',
+  'claude-haiku-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
@@ -369,29 +372,61 @@ export class AnthropicProvider extends LLMProvider {
     if (toolSearchUsed) {
       headers['anthropic-beta'] = 'advanced-tool-use-2025-11-20';
     }
-    const requestOpts = {
-      url: endpoint,
-      method: 'POST',
-      headers,
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      providerLabel: 'Anthropic',
-      secrets: [apiKey],
-      hasApiKey: true,
-      allowInsecureHttp: this.allowInsecureHttp
+    const executeAnthropicRequest = async (
+      reqPayload: Record<string, any>,
+      reqHeaders: Record<string, string>
+    ): Promise<Record<string, any>> => {
+      const requestOpts = {
+        url: endpoint,
+        method: 'POST',
+        headers: reqHeaders,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+        providerLabel: 'Anthropic',
+        secrets: [apiKey],
+        hasApiKey: true,
+        allowInsecureHttp: this.allowInsecureHttp
+      };
+      return wantsStreaming(options)
+        ? await streamAnthropicMessages({
+            ...requestOpts,
+            payload: reqPayload,
+            onChunk: options.onChunk,
+            onReasoningChunk: options.onReasoningChunk
+          })
+        : await safeProviderFetchJson({
+            ...requestOpts,
+            body: JSON.stringify(reqPayload)
+          });
     };
 
-    const data: Record<string, any> = wantsStreaming(options)
-      ? await streamAnthropicMessages({
-          ...requestOpts,
-          payload,
-          onChunk: options.onChunk,
-          onReasoningChunk: options.onReasoningChunk
-        })
-      : await safeProviderFetchJson({
-          ...requestOpts,
-          body: JSON.stringify(payload)
+    const hasAdvancedFeature = Boolean(toolSearchUsed || payload['thinking'] || payload['output_config']);
+    let data: Record<string, any>;
+    try {
+      data = await executeAnthropicRequest(payload, headers);
+    } catch (err: unknown) {
+      const isFeatureReject400 = hasAdvancedFeature
+        && err instanceof ProviderHttpError
+        && err.status === 400
+        && /(?:tool_search|defer_loading|anthropic-beta|thinking|output_config|effort|extra inputs|unexpected|not supported)/i.test(err.message);
+      if (!isFeatureReject400) throw err;
+
+      // Conservative single-shot fallback for Anthropic gateways/proxies/tiers
+      // that reject beta tool_search, adaptive thinking, or output_config fields.
+      const fallbackPayload: Record<string, any> = { ...payload };
+      delete fallbackPayload['thinking'];
+      delete fallbackPayload['output_config'];
+      if (toolSearchUsed && Array.isArray(options.tools) && options.tools.length > 0) {
+        const plainScan = scanAndAdaptToolsForProvider(options.tools, 'anthropic', {
+          useToolSearch: false
         });
+        fallbackPayload['tools'] = plainScan.adaptedTools;
+        freeFormPaths = plainScan.freeFormPaths;
+      }
+      const fallbackHeaders: Record<string, string> = { ...headers };
+      delete fallbackHeaders['anthropic-beta'];
+      data = await executeAnthropicRequest(fallbackPayload, fallbackHeaders);
+    }
 
     let content = '';
     const toolCalls: ChatResponseToolCall[] = [];

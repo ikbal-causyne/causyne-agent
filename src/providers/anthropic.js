@@ -3,7 +3,7 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider, normalizeToolName } from '../tools/toolScanner.js';
 import { prepareMessagesForAnthropic, safeParseJsonObject, sanitizeProviderToolId, serializeAndDecodeArguments } from './wireNormalizer.js';
-import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
+import { ProviderHttpError, requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamAnthropicMessages, wantsStreaming } from './byokStream.js';
 const PROMPT_CACHE_MODELS = [
     'claude-3-7-sonnet',
@@ -14,6 +14,7 @@ const PROMPT_CACHE_MODELS = [
     'claude-mythos-5',
     'claude-opus-5',
     'claude-sonnet-5',
+    'claude-haiku-5',
     'claude-opus-4-8',
     'claude-opus-4-7',
     'claude-opus-4-6',
@@ -27,6 +28,7 @@ const TOOL_SEARCH_MODELS = [
     'claude-mythos-5',
     'claude-opus-5',
     'claude-sonnet-5',
+    'claude-haiku-5',
     'claude-opus-4-8',
     'claude-opus-4-7',
     'claude-opus-4-6',
@@ -346,28 +348,58 @@ export class AnthropicProvider extends LLMProvider {
         if (toolSearchUsed) {
             headers['anthropic-beta'] = 'advanced-tool-use-2025-11-20';
         }
-        const requestOpts = {
-            url: endpoint,
-            method: 'POST',
-            headers,
-            signal: options.signal,
-            timeoutMs: options.timeoutMs,
-            providerLabel: 'Anthropic',
-            secrets: [apiKey],
-            hasApiKey: true,
-            allowInsecureHttp: this.allowInsecureHttp
+        const executeAnthropicRequest = async (reqPayload, reqHeaders) => {
+            const requestOpts = {
+                url: endpoint,
+                method: 'POST',
+                headers: reqHeaders,
+                signal: options.signal,
+                timeoutMs: options.timeoutMs,
+                providerLabel: 'Anthropic',
+                secrets: [apiKey],
+                hasApiKey: true,
+                allowInsecureHttp: this.allowInsecureHttp
+            };
+            return wantsStreaming(options)
+                ? await streamAnthropicMessages({
+                    ...requestOpts,
+                    payload: reqPayload,
+                    onChunk: options.onChunk,
+                    onReasoningChunk: options.onReasoningChunk
+                })
+                : await safeProviderFetchJson({
+                    ...requestOpts,
+                    body: JSON.stringify(reqPayload)
+                });
         };
-        const data = wantsStreaming(options)
-            ? await streamAnthropicMessages({
-                ...requestOpts,
-                payload,
-                onChunk: options.onChunk,
-                onReasoningChunk: options.onReasoningChunk
-            })
-            : await safeProviderFetchJson({
-                ...requestOpts,
-                body: JSON.stringify(payload)
-            });
+        const hasAdvancedFeature = Boolean(toolSearchUsed || payload['thinking'] || payload['output_config']);
+        let data;
+        try {
+            data = await executeAnthropicRequest(payload, headers);
+        }
+        catch (err) {
+            const isFeatureReject400 = hasAdvancedFeature
+                && err instanceof ProviderHttpError
+                && err.status === 400
+                && /(?:tool_search|defer_loading|anthropic-beta|thinking|output_config|effort|extra inputs|unexpected|not supported)/i.test(err.message);
+            if (!isFeatureReject400)
+                throw err;
+            // Conservative single-shot fallback for Anthropic gateways/proxies/tiers
+            // that reject beta tool_search, adaptive thinking, or output_config fields.
+            const fallbackPayload = { ...payload };
+            delete fallbackPayload['thinking'];
+            delete fallbackPayload['output_config'];
+            if (toolSearchUsed && Array.isArray(options.tools) && options.tools.length > 0) {
+                const plainScan = scanAndAdaptToolsForProvider(options.tools, 'anthropic', {
+                    useToolSearch: false
+                });
+                fallbackPayload['tools'] = plainScan.adaptedTools;
+                freeFormPaths = plainScan.freeFormPaths;
+            }
+            const fallbackHeaders = { ...headers };
+            delete fallbackHeaders['anthropic-beta'];
+            data = await executeAnthropicRequest(fallbackPayload, fallbackHeaders);
+        }
         let content = '';
         const toolCalls = [];
         const thinkingBlocks = [];
