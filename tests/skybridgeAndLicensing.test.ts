@@ -23,6 +23,12 @@ import {
   parseValidatedCdpPort
 } from '../src/web/skybridgeBrowserBridge.js';
 import {
+  CAUSYNE_BROWSER_MCP_NAME,
+  CAUSYNE_BROWSER_MCP_TOOLS,
+  handleBrowserMcpRpc
+} from '../src/web/skybridgeBrowserMcp.js';
+import { buildSharedBrowserAwarenessPrompt } from '../src/agentLoop.js';
+import {
   formatByokProbeReport,
   runZeroSpendByokProbe
 } from '../src/verification/byokSmokeProbe.js';
@@ -444,6 +450,110 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
         extractExplicitBookmarkUrls('<DT><A HREF="https://causyne.com/">Causyne</A><A HREF="javascript:alert(1)">Bad</A>'),
         ['https://causyne.com/']
       );
+
+      // Shared Browser Streamable HTTP MCP endpoint: auth, protocol handshake, tools/list, and safe tools/call
+      const unauthMcp = await fetch(`${handle.origin}/api/mcp/browser`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+      });
+      assert.equal(unauthMcp.status, 401);
+
+      const getMcp = await fetch(`${handle.origin}/api/mcp/browser`, {
+        method: 'GET',
+        headers: authHeaders
+      });
+      assert.equal(getMcp.status, 405);
+
+      const initMcp = await fetch(`${handle.origin}/api/mcp/browser`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-11-25' }
+        })
+      });
+      assert.equal(initMcp.status, 200);
+      const initBody = await initMcp.json() as any;
+      assert.equal(initBody.result?.serverInfo?.name, CAUSYNE_BROWSER_MCP_NAME);
+      assert.equal(initBody.result?.protocolVersion, '2025-11-25');
+
+      const notifMcp = await fetch(`${handle.origin}/api/mcp/browser`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })
+      });
+      assert.equal(notifMcp.status, 202);
+
+      const listMcp = await fetch(`${handle.origin}/api/mcp/browser`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
+      });
+      assert.equal(listMcp.status, 200);
+      const listBody = await listMcp.json() as any;
+      const toolNames = (listBody.result?.tools || []).map((t: any) => t.name);
+      assert.deepEqual(toolNames, CAUSYNE_BROWSER_MCP_TOOLS.map((t) => t.name));
+      assert.ok(toolNames.includes('browser_read_page'));
+      assert.ok(toolNames.includes('browser_screenshot'));
+
+      const tabsMcp = await fetch(`${handle.origin}/api/mcp/browser`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'browser_tabs', arguments: { ensureStarted: false } }
+        })
+      });
+      assert.equal(tabsMcp.status, 200);
+      const tabsBody = await tabsMcp.json() as any;
+      assert.equal(tabsBody.result?.isError, undefined);
+      assert.match(String(tabsBody.result?.content?.[0]?.text || ''), /"active":\s*false/);
+
+      const badRpc = await handleBrowserMcpRpc(
+        { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'nonexistent_tool', arguments: {} } },
+        { workspaceRoot: tmpWs, version: 'test' }
+      );
+      assert.equal((badRpc?.result as any)?.isError, true);
+
+      // Shared browser awareness prompt renders both idle and active live-tab context cleanly
+      const idlePrompt = buildSharedBrowserAwarenessPrompt({
+        active: false,
+        visible: false,
+        engine: null,
+        activeTabId: null,
+        url: '',
+        title: '',
+        viewport: { width: 1280, height: 800 },
+        tabs: []
+      }, true);
+      assert.match(idlePrompt, /SHARED WORKSPACE BROWSER \(IDLE/);
+      assert.match(idlePrompt, /causyne-browser/);
+
+      const livePrompt = buildSharedBrowserAwarenessPrompt({
+        active: true,
+        visible: false,
+        engine: 'chromium',
+        activeTabId: 'tab-1',
+        url: 'https://www.youtube.com/watch?v=demo123',
+        title: 'Demo Figure Skating Exhibition',
+        viewport: { width: 1280, height: 800 },
+        tabs: [{ tabId: 'tab-1', url: 'https://www.youtube.com/watch?v=demo123', title: 'Demo Figure Skating Exhibition', active: true }]
+      }, true);
+      assert.match(livePrompt, /SHARED WORKSPACE BROWSER \(LIVE/);
+      assert.match(livePrompt, /Demo Figure Skating Exhibition/);
+      assert.match(livePrompt, /browser_screenshot/);
+      assert.match(livePrompt, /browser_read_page/);
+
+      // Web client script folds nativeStep notices into step timeline and filters degenerate "true" probes
+      const htmlCheck = await fetch(`${handle.origin}/`);
+      const htmlSource = await htmlCheck.text();
+      assert.match(htmlSource, /addNativeStep/);
+      assert.match(htmlSource, /ev\.nativeStep === true/);
     } finally {
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });

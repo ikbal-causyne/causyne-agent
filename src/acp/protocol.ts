@@ -233,6 +233,11 @@ export interface AcpDiscoveredSessionModels {
   configOptionId?: string | undefined;
 }
 
+export interface McpServerHeader {
+  name: string;
+  value: string;
+}
+
 export interface McpServer {
   name: string;
   command?: string;
@@ -240,6 +245,7 @@ export interface McpServer {
   env?: Array<{ name: string; value: string }> | Record<string, string>;
   url?: string;
   type?: string;
+  headers?: McpServerHeader[];
 }
 
 export interface NewSessionRequest {

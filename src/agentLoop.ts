@@ -23,8 +23,11 @@ import { validateAndNormalizeToolArgs } from './agent/toolArgValidator.js';
 import { physicalPath, isWithinPhysicalPath } from './agent/workspaceBoundary.js';
 import { resolveTaskTokenCeiling, peerCallTokenCeiling, isAntigravityPeer, isTerminalBudgetFailure, desktopDeadline, remainingDesktopTime, DEFAULT_AGY_TASK_TOKENS } from './budget/budgetPolicy.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
-import type { RequestPermissionRequest, RequestPermissionResponse } from './acp/protocol.js';
+import type { McpServer, RequestPermissionRequest, RequestPermissionResponse } from './acp/protocol.js';
+import { isAcpProvider } from './providers/acp.js';
+import { causyneBrowser, type LiveBrowserAwarenessContext } from './browser/causyneBrowser.js';
 import { createHash, randomUUID } from 'crypto';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { processApprovalScope, createApprovalScope } from './approvalGrants.js';
 import { pruneSessions as pruneEmbodimentSessions, describeSession } from './embodimentSession.js';
@@ -203,6 +206,7 @@ export interface AgentLoopOptions {
   approvalScope?: AgentLoopApprovalScope;
   provider?: string;
   model?: string;
+  peerMcpServers?: McpServer[] | undefined;
 }
 
 export {
@@ -276,6 +280,37 @@ const WEB_VERIFICATION_PROMPT = `\n\n# Web & UI Verification
 Prefer \`browser_act\` preview for static workspace HTML/ES modules without starting a separate server; use \`sysRunBg\` only when a real app server is needed. Do not kill unrelated processes to claim a port. Always verify rendered web/UI output via \`browser_act\` (preview/snapshot) or \`screenshot\`/\`vision_inspect_ui\`, reporting DOM inspection separately from visual pixel inspection.`;
 
 const ANDROID_CONTEXT_RE = /\b(?:android|apk|aab|adb|emulator|gradle|gradlew|kotlin|jetpack|compose|java|jdk|jvm|avd|dumpsys)\b/i;
+
+const SHARED_BROWSER_INTENT_RE = /\b(?:browser|tab|tabs|webpage|website|site|youtube|video|watch|stream|url|https?:\/\/|click|navigate|scroll|open\s+(?:the\s+)?(?:page|link|site)|in\s+(?:the\s+)?browser|on\s+(?:this|the)\s+(?:page|tab|screen))\b/i;
+
+const CAUSYNE_CLI_BIN_PATH = fileURLToPath(new URL('../bin/causyne.js', import.meta.url));
+
+export function buildSharedBrowserAwarenessPrompt(
+  live: LiveBrowserAwarenessContext,
+  hasBrowserMcp: boolean
+): string {
+  const toolHint = hasBrowserMcp
+    ? 'Use your attached `causyne-browser` MCP tools (`browser_tabs`, `browser_read_page`, `browser_screenshot`, `browser_navigate`, `browser_interact`, `browser_extract`) directly as native tools (or `browser_act` if needed).'
+    : 'Use `browser_act` directly (actions: `snapshot`, `extract`, `screenshot`, `click`, `type`, `scroll`, `navigate`, `listTabs`).';
+  if (!live.active) {
+    return `\n\n◆ SHARED WORKSPACE BROWSER (IDLE — built-in live browser shared with the user beside chat): Causyne includes a real shared browser that both you and the user can operate together. ${toolHint} Opening or navigating a URL launches it automatically in the user's live Browser Panel.`;
+  }
+  const modeLabel = live.visible ? 'visible native OS window' : 'embedded live Browser Panel';
+  const engineLabel = live.engine || 'browser';
+  const tabLines = live.tabs.slice(0, 8).map((tab, idx) => {
+    const marker = tab.active ? ' [ACTIVE]' : '';
+    const titlePart = tab.title ? `"${tab.title.slice(0, 90)}" — ` : '';
+    return `  ${idx + 1}. (${tab.tabId})${marker} ${titlePart}${tab.url || 'about:blank'}`;
+  });
+  return [
+    `\n\n◆ SHARED WORKSPACE BROWSER (LIVE — shared directly with the user beside this chat):`,
+    `- Runtime: ${engineLabel} (${modeLabel}, viewport ${live.viewport.width}x${live.viewport.height})`,
+    `- Active tab: ${live.title ? `"${live.title.slice(0, 120)}" — ` : ''}${live.url || 'about:blank'} (tabId=${live.activeTabId || 'active'})`,
+    ...(tabLines.length > 0 ? [`- Open tabs (${live.tabs.length}):`, ...tabLines] : []),
+    `- Both you and the user see and operate this exact live browser. When the user refers to "the browser", "this page", "this tab", "this video", or asks to analyze/inspect/control what is currently open, inspect it immediately. ${toolHint}`,
+    `- To visually inspect layout, images, or video/motion in the open tab, call \`browser_screenshot\` (supports \`frames: 2..4\` for sequential motion/video frames) alongside \`browser_read_page\`. Never run dummy shell \`echo\` probes or claim you cannot see the browser.`
+  ].join('\n');
+}
 
 function getProviderSpecificPrompt(provider: string = '') {
   const p = provider.toLowerCase();
@@ -514,6 +549,9 @@ export class AgentLoop {
     this.approvalScope = options.approvalScope && typeof options.approvalScope.isAlwaysAllowed === 'function'
       ? options.approvalScope
       : processApprovalScope;
+    this.peerMcpServers = Array.isArray(options.peerMcpServers)
+      ? [...options.peerMcpServers]
+      : [];
 
     this.config = loadConfig();
     applyProviderOverrides(this.config, this.providerOverride, this.modelOverride);
@@ -2332,8 +2370,15 @@ export class AgentLoop {
           deniedTools: this.config.deniedTools
         });
         await this.ensureToolsList(eligibleTools);
+        const promptForDomain = this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '';
+        const liveBrowserAwareness = causyneBrowser({ workspace: this.workspaceRoot }).getLiveAwarenessContext();
+        const sharedBrowserRelevant = liveBrowserAwareness.active || SHARED_BROWSER_INTENT_RE.test(promptForDomain);
+        if (sharedBrowserRelevant) {
+          this.savedTools.admitTool('browser_act');
+        }
         const permittedTools = this.toolScope instanceof Set && this.toolScope.size > 0
-          ? eligibleTools.filter((tool: { name: string }) => this.toolScope.has(tool.name)) : eligibleTools;
+          ? eligibleTools.filter((tool: { name: string }) => this.toolScope.has(tool.name) || (sharedBrowserRelevant && tool.name === 'browser_act'))
+          : eligibleTools;
         const dynamicTools = this.smartTools.schemas(permittedTools, this.unlockedTools, this.unlockedPacks,
           this.config.grantAllTools === true);
         const dynamicToolNames = dynamicTools.map((t: any) => t.name);
@@ -2360,7 +2405,6 @@ export class AgentLoop {
             ? "/ (ALL ACCESS GRANTED - You can read/write anywhere EXCEPT system protected folders like /etc or /System)"
             : (this.sandbox.workspacePaths ? this.sandbox.workspacePaths.join(', ') : this.workspaceRoot);
         const baseProviderPrompt = getProviderSpecificPrompt(this.config.provider);
-        const promptForDomain = this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '';
         const domainArchetype = determineToolScope(promptForDomain, this.taskShape).archetype;
         const isVisualOrWebTask = isWebIntent(promptForDomain)
           || this.hasWebSurfaceArtifacts()
@@ -2496,6 +2540,20 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           this.debugLog(`uncertainty gate skipped: ${e.message}`);
         }
 
+        const effectivePeerMcpServers: McpServer[] = Array.isArray(this.peerMcpServers)
+          ? [...this.peerMcpServers]
+          : [];
+        const hasConfiguredBrowserMcp = effectivePeerMcpServers.some((srv) => srv?.name === 'causyne-browser');
+        if (!hasConfiguredBrowserMcp && isAcpProvider(this.config?.provider) && !process.env.NODE_TEST_CONTEXT) {
+          effectivePeerMcpServers.push({
+            name: 'causyne-browser',
+            command: process.execPath,
+            args: [CAUSYNE_CLI_BIN_PATH, 'browser-mcp', '--workspace', this.workspaceRoot]
+          });
+        }
+        const hasBrowserMcpAttached = effectivePeerMcpServers.some((srv) => srv?.name === 'causyne-browser');
+        const sharedBrowserPrompt = buildSharedBrowserAwarenessPrompt(liveBrowserAwareness, hasBrowserMcpAttached);
+
         const isLocalOllama = String(this.config?.provider || '').trim().toLowerCase() === 'ollama';
         const effectiveToolsListText = resolveToolsCatalogPromptBlock(
           this.config?.provider,
@@ -2534,12 +2592,12 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           // so it anchors too.
           ...(skillSystemMessage(this.activeSkill) || []),
           // [5] VOLATILE tail — the only bytes that may differ between steps:
-          // autonomy/workspace paths (change via config) and persistent memory
-          // (grows via memory_write mid-task). Kept LAST and UNcached so a change
-          // here never invalidates the cached prefix in [1]-[3].
+          // autonomy/workspace paths (change via config), live shared browser
+          // state, and persistent memory (grows via memory_write mid-task).
+          // Kept LAST and UNcached so a change here never invalidates [1]-[3].
           {
             role: 'system',
-            content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}CURRENT AUTONOMY MODE: ${autonomyMode}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)${memoryContext ? `\n\n◆ PERSISTENT MEMORY (workspace-relevant notes — actual repository files and docs on disk always override memory if anything conflicts):\n${memoryContext}` : ''}`
+            content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}CURRENT AUTONOMY MODE: ${autonomyMode}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)${sharedBrowserPrompt}${memoryContext ? `\n\n◆ PERSISTENT MEMORY (workspace-relevant notes — actual repository files and docs on disk always override memory if anything conflicts):\n${memoryContext}` : ''}`
           }
         ];
 
@@ -2707,6 +2765,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
             ? remainingBudget : undefined,
           taskDeadlineMs: this._taskWallDeadlineAt ?? undefined,
           workspaceRoot: this.workspaceRoot,
+          ...(effectivePeerMcpServers.length > 0 ? { peerMcpServers: effectivePeerMcpServers } : {}),
           onPeerPermission: (request: RequestPermissionRequest) => this.requestPeerPermission(request),
           onPeerFileRead: (file: string, options?: { line?: number; limit?: number }) => this.executePeerFile('fs_read', file, undefined, options),
           onPeerFileWrite: async (file: string, content: string) => { await this.executePeerFile('fs_write', file, content); },

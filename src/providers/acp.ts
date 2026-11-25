@@ -7,12 +7,54 @@ import { AcpClient } from '../acp/client.js';
 import { redactProviderSecrets } from './byokHttp.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
-import type { RequestPermissionRequest, SessionUpdate, ToolKind } from '../acp/protocol.js';
+import type { McpServer, RequestPermissionRequest, SessionUpdate, ToolKind } from '../acp/protocol.js';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { extractToolCallJsonObjects, stripToolCallMarkup, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 import { canonicalizeToolName } from '../tools/toolSelfRepair.js';
+
+const CAUSYNE_BIN_PATH = fileURLToPath(new URL('../../bin/causyne.js', import.meta.url));
+
+function resolvePeerMcpServersForCapabilities(
+  rawServers: readonly unknown[] | undefined,
+  supportsHttpMcp: boolean,
+  workspaceRoot: string
+): unknown[] {
+  if (!Array.isArray(rawServers) || rawServers.length === 0) return [];
+  const resolved: unknown[] = [];
+  for (const entry of rawServers) {
+    if (!entry || typeof entry !== 'object') {
+      resolved.push(entry);
+      continue;
+    }
+    const server = entry as McpServer;
+    if (
+      server.name === 'causyne-browser'
+      && server.type === 'http'
+      && typeof server.url === 'string'
+      && !supportsHttpMcp
+    ) {
+      const authHeader = Array.isArray(server.headers)
+        ? server.headers.find((h) => h.name.toLowerCase() === 'authorization')?.value || ''
+        : '';
+      const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
+      resolved.push({
+        name: 'causyne-browser',
+        command: process.execPath,
+        args: [CAUSYNE_BIN_PATH, 'browser-mcp', '--workspace', workspaceRoot],
+        env: [
+          { name: 'CAUSYNE_SKYBRIDGE_URL', value: server.url },
+          ...(bearer ? [{ name: 'CAUSYNE_SKYBRIDGE_TOKEN', value: bearer }] : [])
+        ]
+      });
+      continue;
+    }
+    resolved.push(entry);
+  }
+  return resolved;
+}
 
 interface AcpTransportSnapshot {
   conversationId: string;
@@ -117,7 +159,8 @@ export class AcpProvider extends LLMProvider {
       PEER_COLLABORATION_POLICY +
       '\n\n[ACP Tool Routing & Workspace Boundary Rules]\n' +
       '1. NATIVE FUNCTION CHANNEL vs CAUSYNE HOST XML CHANNEL:\n' +
-      '   - Your native function-calling channel ONLY accepts your own native tools (such as `read`, `write`, `edit`, `bash`, `glob`, `grep`, `todowrite`, and configured MCP tools). Use your native tools directly for workspace file reads/writes, shell commands, and todo checklists (use `todowrite` if available instead of calling `update_plan` as a native function).\n' +
+      '   - Your native function-calling channel ONLY accepts your own native tools (such as `read`, `write`, `edit`, `bash`, `glob`, `grep`, `todowrite`, and configured MCP tools including `causyne-browser` tools such as `browser_tabs`, `browser_read_page`, `browser_screenshot`, `browser_navigate`, `browser_interact`, `browser_extract` when attached). Use your native tools directly for workspace file reads/writes, shell commands, shared live browser inspection/control, and todo checklists (use `todowrite` if available instead of calling `update_plan` as a native function).\n' +
+      '   - When the user refers to "the browser", "this page", "this tab", or "this video", inspect Causyne\'s live shared workspace browser immediately using the attached `causyne-browser` MCP tools (or host `browser_act` via `<tool_call>` if MCP browser tools are not listed). NEVER run dummy `bash` (`echo`) probes instead of inspecting the browser.\n' +
       '   - Causyne host tools listed under [Available Tools] / [Current Available Tools] (such as `browser_act`, `screenshot`, `vision_inspect_ui`, `update_plan`, `memory_write`, `ui_forge`, `astryx_oracle`, `tool_search`, `fs_read_skill`) are NOT registered in your native function-calling schema. NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`), NEVER call `tool_call` as a native tool, and NEVER emit dummy `bash` (`echo`) calls while trying to invoke them.\n' +
       '   - Bundled Causyne skills must be read via the host tool `fs_read_skill`. Do NOT call peer-native `skill` or functions for Causyne skills. To read a skill, write `<tool_call>{"name": "fs_read_skill", "arguments": {"skill_id": "domain/name"}}</tool_call>` directly in your assistant text response.\n' +
       '   - To invoke a Causyne host tool, write `<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>` directly in your assistant text response with NO native function call in that step; Causyne will execute the host tool and return the result on the next turn.\n' +
@@ -618,7 +661,13 @@ export class AcpProvider extends LLMProvider {
                 || name.toLowerCase() === 'invalid tool'
                 || name.toLowerCase() === 'invalid'
                 || (typeof parameters.error === 'string' && /Model tried to call unavailable tool/i.test(parameters.error));
-              if (isInvalidToolAttempt || (name === 'sysRun' && (commandDetail.trim() === 'true' || commandDetail.trim() === ':'))) {
+              const isNoopShellProbe = commandDetail.trim() === 'true'
+                || commandDetail.trim() === ':'
+                || rawTitle.trim() === 'true'
+                || rawTitle.trim() === ':'
+                || name.trim() === 'true'
+                || name.trim() === ':';
+              if (isInvalidToolAttempt || isNoopShellProbe) {
                 this.liveFileActions.delete(id);
                 this.turnActions.delete(id);
                 return;
@@ -679,7 +728,13 @@ export class AcpProvider extends LLMProvider {
     let sessionId: string;
     try {
       await client.start(signal);
-      sessionId = await client.newSession(workspaceRoot, this.peerServices?.peerMcpServers || [], signal);
+      const supportsHttpMcp = client.agentCapabilities?.mcpCapabilities?.http === true;
+      const effectiveMcpServers = resolvePeerMcpServersForCapabilities(
+        this.peerServices?.peerMcpServers,
+        supportsHttpMcp,
+        workspaceRoot
+      );
+      sessionId = await client.newSession(workspaceRoot, effectiveMcpServers, signal);
     } catch (err) {
       await client.close().catch(() => {});
       throw err;

@@ -175,7 +175,11 @@ export function isCodePath(target: string): boolean {
 }
 
 export function isRenderedNativeBrowserAction(tool: string): boolean {
-  return ['browser_act', 'preview', 'snapshot'].includes(tool.toLowerCase());
+  const lower = tool.toLowerCase();
+  if (['browser_act', 'preview', 'snapshot', 'browser_read_page', 'browser_screenshot', 'browser_navigate', 'browser_interact', 'browser_tabs', 'browser_extract'].includes(lower)) {
+    return true;
+  }
+  return lower.includes('causyne-browser') || lower.includes('causyne_browser');
 }
 
 /** Only inspected, successful DOM output counts as browser verification. */

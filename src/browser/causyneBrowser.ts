@@ -432,6 +432,57 @@ export interface LiveBrowserTabSummary {
   active: boolean;
 }
 
+export interface LiveBrowserAwarenessContext {
+  active: boolean;
+  visible: boolean;
+  engine: 'chromium' | 'camoufox' | null;
+  activeTabId: string | null;
+  url: string;
+  title: string;
+  viewport: { width: number; height: number };
+  tabs: LiveBrowserTabSummary[];
+}
+
+export interface LiveBrowserMediaInfo {
+  tag: 'video' | 'audio';
+  paused: boolean;
+  ended: boolean;
+  muted: boolean;
+  currentTime: number;
+  duration: number;
+  width: number;
+  height: number;
+  readyState: number;
+  error: string;
+}
+
+export interface AgentBrowserPageInspection {
+  tabId: string;
+  url: string;
+  title: string;
+  engine: 'chromium' | 'camoufox' | null;
+  visible: boolean;
+  viewport: { width: number; height: number };
+  refsCount: number;
+  snapshot: string;
+  visibleText: string;
+  media: LiveBrowserMediaInfo[];
+  runtimeErrors: string[];
+  tabs: LiveBrowserTabSummary[];
+}
+
+export interface AgentViewportCapture {
+  tabId: string;
+  url: string;
+  title: string;
+  width: number;
+  height: number;
+  mimeType: 'image/jpeg';
+  buffer: Buffer;
+  mediaTimeSeconds: number | null;
+  mediaPaused: boolean | null;
+}
+
 export interface LiveBrowserFrame {
   active: boolean;
   visible: boolean;
@@ -1271,6 +1322,193 @@ export class CausyneBrowser {
     return this.isSessionHealthy();
   }
 
+  /**
+   * Synchronous, zero-side-effect snapshot of the live shared browser state for
+   * agent prompt awareness. Never launches the browser when idle.
+   */
+  getLiveAwarenessContext(): LiveBrowserAwarenessContext {
+    if (!this.isSessionHealthy()) {
+      return {
+        active: false,
+        visible: this.visible,
+        engine: null,
+        activeTabId: null,
+        url: '',
+        title: '',
+        viewport: { width: this.cachedWidth, height: this.cachedHeight },
+        tabs: []
+      };
+    }
+    const cachedTitleById = new Map<string, string>();
+    for (const item of this.cachedTabSummaries) {
+      cachedTitleById.set(item.tabId, item.title);
+    }
+    const liveTabs: LiveBrowserTabSummary[] = [];
+    let activeTab: TabState | undefined = this.activeTabId ? this.tabs.get(this.activeTabId) : undefined;
+    if (activeTab && (activeTab.page.isClosed() || activeTab.crashed)) {
+      activeTab = undefined;
+    }
+    for (const tab of this.tabs.values()) {
+      if (tab.page.isClosed() || tab.crashed) continue;
+      if (!activeTab) activeTab = tab;
+      const liveUrl = tab.page.url();
+      const title = cachedTitleById.get(tab.id) ?? (tab.id === activeTab.id ? this.cachedTitle : '');
+      liveTabs.push({
+        tabId: tab.id,
+        url: liveUrl,
+        title,
+        active: tab.id === activeTab.id
+      });
+    }
+    const activeUrl = activeTab ? activeTab.page.url() : this.cachedUrl;
+    const activeTitle = activeTab
+      ? (cachedTitleById.get(activeTab.id) || this.cachedTitle)
+      : this.cachedTitle;
+    const vp = activeTab && typeof activeTab.page.viewportSize === 'function'
+      ? activeTab.page.viewportSize()
+      : null;
+    return {
+      active: liveTabs.length > 0,
+      visible: this.visible,
+      engine: this.activeEngine,
+      activeTabId: activeTab?.id ?? null,
+      url: activeUrl,
+      title: activeTitle,
+      viewport: {
+        width: vp?.width ?? this.cachedWidth,
+        height: vp?.height ?? this.cachedHeight
+      },
+      tabs: liveTabs
+    };
+  }
+
+  /**
+   * Rich structured page inspection for agent tool calls (`causyne-browser` MCP
+   * and shared browser workflows): URL, title, media/video playback state,
+   * visible page text, interactive accessibility tree, and runtime errors.
+   */
+  async inspectPageForAgent(options: {
+    tabId?: string | undefined;
+    maxChars?: number | undefined;
+    includeSnapshot?: boolean | undefined;
+  } = {}): Promise<AgentBrowserPageInspection> {
+    return this.enqueueOperation(async () => {
+      await this.start();
+      let state: TabState;
+      if (options.tabId) {
+        const chosen = this.tabs.get(options.tabId);
+        if (!chosen || chosen.page.isClosed() || chosen.crashed) {
+          throw new Error(`Unknown or closed browser tab: ${options.tabId}`);
+        }
+        this.activeTabId = chosen.id;
+        state = chosen;
+      } else {
+        state = await this.activeTab();
+      }
+      await this.restoreLastTargetIfBlank(state);
+      const maxChars = Math.max(500, Math.min(24000, options.maxChars ?? 8000));
+      const includeSnapshot = options.includeSnapshot !== false;
+      if (includeSnapshot) {
+        await this.captureSnapshotState(state);
+      }
+      await this.refreshCachedTabMetadata();
+      const domInfo = await state.page.evaluate<{ visibleText: string; media: LiveBrowserMediaInfo[] }>(`(() => {
+        const rawText = (document.body && (document.body.innerText || document.body.textContent)) || '';
+        const visibleText = rawText.replace(/\\r/g, '').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, ${maxChars});
+        const media = [];
+        const nodes = document.querySelectorAll('video, audio');
+        for (let i = 0; i < nodes.length && i < 6; i += 1) {
+          const el = nodes[i];
+          const tag = el.tagName.toLowerCase() === 'audio' ? 'audio' : 'video';
+          const errMsg = el.error ? (el.error.message || ('MEDIA_ERR_' + el.error.code)) : '';
+          media.push({
+            tag,
+            paused: Boolean(el.paused),
+            ended: Boolean(el.ended),
+            muted: Boolean(el.muted),
+            currentTime: Number.isFinite(el.currentTime) ? Number(el.currentTime) : 0,
+            duration: Number.isFinite(el.duration) ? Number(el.duration) : 0,
+            width: Number(el.videoWidth || el.clientWidth || 0),
+            height: Number(el.videoHeight || el.clientHeight || 0),
+            readyState: Number(el.readyState || 0),
+            error: String(errMsg || '')
+          });
+        }
+        return { visibleText, media };
+      })()`).catch(() => ({ visibleText: '', media: [] as LiveBrowserMediaInfo[] }));
+      const vp = typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
+      const snapWindow = includeSnapshot ? windowSnapshot(state.lastSnapshot, 0) : null;
+      return {
+        tabId: state.id,
+        url: state.page.url(),
+        title: await this.safePageTitle(state.page),
+        engine: this.activeEngine,
+        visible: this.visible,
+        viewport: { width: vp?.width ?? this.cachedWidth, height: vp?.height ?? this.cachedHeight },
+        refsCount: state.refs.size,
+        snapshot: snapWindow ? snapWindow.text : '',
+        visibleText: domInfo.visibleText,
+        media: domInfo.media,
+        runtimeErrors: [...state.runtimeErrors],
+        tabs: [...this.cachedTabSummaries]
+      };
+    });
+  }
+
+  /**
+   * Capture a live viewport frame buffer plus active media playback timestamp
+   * for vision-capable agents inspecting the shared browser.
+   */
+  async captureViewportBuffer(options: {
+    tabId?: string | undefined;
+    fullPage?: boolean | undefined;
+    quality?: number | undefined;
+  } = {}): Promise<AgentViewportCapture> {
+    return this.enqueueOperation(async () => {
+      await this.start();
+      let state: TabState;
+      if (options.tabId) {
+        const chosen = this.tabs.get(options.tabId);
+        if (!chosen || chosen.page.isClosed() || chosen.crashed) {
+          throw new Error(`Unknown or closed browser tab: ${options.tabId}`);
+        }
+        this.activeTabId = chosen.id;
+        state = chosen;
+      } else {
+        state = await this.activeTab();
+      }
+      await this.restoreLastTargetIfBlank(state);
+      await this.refreshCachedTabMetadata();
+      const quality = Math.max(40, Math.min(92, options.quality ?? 78));
+      const buffer = await state.page.screenshot({
+        type: 'jpeg',
+        quality,
+        ...(options.fullPage === true ? { fullPage: true } : {}),
+        timeout: 8000
+      });
+      const mediaState = await state.page.evaluate<{ time: number | null; paused: boolean | null }>(`(() => {
+        const v = document.querySelector('video');
+        if (!v) return { time: null, paused: null };
+        return {
+          time: Number.isFinite(v.currentTime) ? Number(v.currentTime) : null,
+          paused: Boolean(v.paused)
+        };
+      })()`).catch(() => ({ time: null, paused: null }));
+      const vp = typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
+      return {
+        tabId: state.id,
+        url: state.page.url(),
+        title: await this.safePageTitle(state.page),
+        width: vp?.width ?? this.cachedWidth,
+        height: vp?.height ?? this.cachedHeight,
+        mimeType: 'image/jpeg',
+        buffer,
+        mediaTimeSeconds: mediaState.time,
+        mediaPaused: mediaState.paused
+      };
+    });
+  }
+
   getRuntimeStatus(): {
     active: boolean;
     visible: boolean;
@@ -1924,18 +2162,31 @@ export class CausyneBrowser {
         this.activeEngine = 'chromium';
         const engine = await loadCapabilityPackage('playwright-core') as { chromium: { launchPersistentContext(profile: string, options: Record<string, unknown>): Promise<BrowserSession> } };
         const profile = path.join(this.profileDirectory, 'chromium');
+        const isSystemChrome = runtime.source === 'system'
+          && typeof runtime.executablePath === 'string'
+          && !/headless/i.test(path.basename(runtime.executablePath));
+        const desktopUa = process.platform === 'darwin'
+          ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+          : (process.platform === 'win32'
+            ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+            : 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
         const chromiumArgs = [
+          ...(!this.visible && isSystemChrome ? ['--headless=new'] : []),
           '--enable-webgl',
           '--use-gl=angle',
           ...(process.platform === 'darwin' ? ['--use-angle=metal'] : ['--use-gl=swiftshader']),
           '--ignore-gpu-blocklist',
           '--enable-gpu-rasterization',
+          '--autoplay-policy=no-user-gesture-required',
+          '--disable-blink-features=AutomationControlled',
           ...(this.visible ? ['--window-size=1300,880'] : [])
         ];
         this.session = await engine.chromium.launchPersistentContext(profile, {
           executablePath: runtime.executablePath,
           headless: !this.visible,
           viewport: { width: 1280, height: 800 },
+          ...(!this.visible ? { userAgent: desktopUa } : {}),
+          ignoreDefaultArgs: ['--enable-automation'],
           serviceWorkers: 'block',
           chromiumSandbox: true,
           args: chromiumArgs,
@@ -2230,6 +2481,7 @@ export class CausyneBrowser {
     state.lastSnapshot = '';
     state.lastStructure = null;
     this.lastTarget = { kind: 'url', url: state.page.url() };
+    await this.refreshCachedTabMetadata().catch(() => {});
   }
 
   private async preview(state: TabState, filePath: string, workspace: string): Promise<void> {

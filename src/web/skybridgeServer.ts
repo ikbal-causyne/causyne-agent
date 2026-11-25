@@ -70,6 +70,12 @@ import {
   importExplicitUserBrowserData,
   syncLocalCdpTabToCausyne
 } from './skybridgeBrowserBridge.js';
+import {
+  CAUSYNE_BROWSER_MCP_NAME,
+  handleBrowserMcpRpc,
+  type JsonRpcMessage
+} from './skybridgeBrowserMcp.js';
+import type { McpServer } from '../acp/protocol.js';
 import { renderSkybridgeHtml } from './skybridgeUi.js';
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -397,7 +403,17 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
   const extraOrigins = options.allowedOrigins ?? [];
   const version = getPackageVersion();
   const hasCustomFactory = typeof options.loopFactory === 'function';
+  let boundPort = requestedPort;
   const serverApprovalScope = createApprovalScope();
+  const buildSharedBrowserPeerMcp = (): McpServer[] => {
+    if (!boundPort) return [];
+    return [{
+      type: 'http',
+      name: CAUSYNE_BROWSER_MCP_NAME,
+      url: `http://127.0.0.1:${boundPort}/api/mcp/browser`,
+      headers: [{ name: 'Authorization', value: `Bearer ${token}` }]
+    }];
+  };
   const loopFactory: SkybridgeLoopFactory = options.loopFactory ?? ((sink, taskId, prompt, opts) => {
     const loopOptions: {
       workspaceRoot: string;
@@ -405,7 +421,12 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
       provider?: string;
       model?: string;
       approvalScope?: ReturnType<typeof createApprovalScope>;
-    } = { workspaceRoot: opts.workspaceRoot, approvalScope: serverApprovalScope };
+      peerMcpServers?: McpServer[];
+    } = {
+      workspaceRoot: opts.workspaceRoot,
+      approvalScope: serverApprovalScope,
+      peerMcpServers: buildSharedBrowserPeerMcp()
+    };
     if (opts.sessionId) loopOptions.memorySessionId = opts.sessionId;
     if (opts.provider) loopOptions.provider = opts.provider;
     if (opts.model) loopOptions.model = opts.model;
@@ -426,7 +447,6 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
     };
   });
 
-  let boundPort = requestedPort;
   let activeLoop: SkybridgeLoopLike | null = null;
   let taskCounter = 0;
   let browserControlOwner: 'human' | 'agent' = 'human';
@@ -946,6 +966,47 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
           browserActive: causyneBrowser({ workspace: workspaceRoot }).isActive(),
           browserControlOwner
         });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/mcp/browser') {
+        res.statusCode = 405;
+        res.setHeader('Allow', 'POST');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ error: 'Use POST for Streamable HTTP MCP JSON-RPC requests.' }));
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/mcp/browser') {
+        const body = await readJsonBody(req) as JsonRpcMessage;
+        const reply = await handleBrowserMcpRpc(body, {
+          workspaceRoot,
+          version,
+          onActivity: (activity) => {
+            if (activity.phase === 'start') {
+              browserControlOwner = 'agent';
+              browserAgentActivity = {
+                active: true,
+                tool: activity.tool,
+                detail: activity.detail,
+                updatedAt: Date.now()
+              };
+            } else {
+              browserAgentActivity = { active: false, tool: '', detail: '', updatedAt: Date.now() };
+            }
+            broadcastBrowserNotice({
+              type: 'agent_activity',
+              controlOwner: browserControlOwner,
+              agentActivity: browserAgentActivity
+            });
+          }
+        });
+        if (reply === null) {
+          res.statusCode = 202;
+          res.end();
+          return;
+        }
+        sendJson(res, 200, reply);
         return;
       }
 

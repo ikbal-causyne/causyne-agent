@@ -486,6 +486,18 @@ program
     });
     server.start();
 });
+program
+    .command('browser-mcp')
+    .description('Start Causyne Shared Browser MCP server over stdio for ACP peers')
+    .option('-d, --workspace <dir>', 'Workspace root directory', process.cwd())
+    .action(async (options) => {
+    const { startBrowserMcpStdioServer } = await import('./web/skybridgeBrowserMcp.js');
+    const workspaceRoot = resolveUserPath(String(options.workspace || process.cwd()));
+    await startBrowserMcpStdioServer({
+        workspaceRoot,
+        version: getPackageVersion()
+    });
+});
 program.on('command:*', function () {
     console.error('Invalid command: %s\nSee --help for a list of available commands.', program.args.join(' '));
     process.exit(1);

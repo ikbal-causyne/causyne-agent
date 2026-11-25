@@ -24,6 +24,7 @@ function shouldSkipAutoUpdateCheck(argv) {
     if (
       token === 'acp'
       || token === 'web'
+      || token === 'browser-mcp'
       || token === '-p'
       || token === '--print'
       || token === '--output-format'
