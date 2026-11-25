@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { causyneHome } from '../utils/paths.js';
-import { LICENSE_API_BASE, LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX, LICENSE_ENFORCEMENT_ENABLED, MAX_ENTITLEMENT_RESPONSE_BYTES, isValidLicensePlan } from './policy.js';
+import { LICENSE_API_BASE, LICENSE_ENFORCEMENT_ENABLED, MAX_ENTITLEMENT_RESPONSE_BYTES, isAllowedCheckoutHost, isValidLicensePlan } from './policy.js';
 import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { safeDisplay } from '../tui/text.js';
 const TOKEN_FILE = 'installation-identity.json';
@@ -357,8 +357,7 @@ export class EntitlementClient {
             throw new EntitlementAccessError('BAD_CHECKOUT_URL', 'Invalid checkout destination returned by server.');
         }
         const host = url.hostname.toLowerCase();
-        const allowedHost = host === LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX
-            || host.endsWith(`.${LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX}`);
+        const allowedHost = isAllowedCheckoutHost(host);
         if (url.protocol !== 'https:' || url.username || url.password || url.port || !allowedHost) {
             throw new EntitlementAccessError('BAD_CHECKOUT_URL', 'Invalid checkout destination returned by server.');
         }

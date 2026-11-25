@@ -10,7 +10,9 @@ import { resolveInvocation } from './tui/invocation.js';
 import { safeDisplay } from './tui/text.js';
 import { resolveUserPath } from './utils/paths.js';
 import { getPackageVersion } from './version.js';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { formatRedactedProviderErrorReport, redactProviderSecrets } from './providers/byokHttp.js';
+import { loadConfig } from './config.js';
+import { formatByokProbeReport, runZeroSpendByokProbe } from './verification/byokSmokeProbe.js';
 export function requestedWorkingDirectory(argv = []) {
     const tokens = Array.isArray(argv) ? argv.slice(2) : [];
     for (let index = 0; index < tokens.length; index++) {
@@ -138,10 +140,51 @@ program
 });
 program
     .command('doctor')
-    .description('Inspect the installation, runtime and update channel')
-    .action(async () => {
+    .description('Inspect the installation, runtime, redacted HTTP errors (--report), or run $0 live probe (--probe)')
+    .option('--report', 'Print a secret-redacted provider HTTP error report')
+    .option('--probe', 'Run a zero-spend ($0) live wire probe across local Ollama and configured free-tier keys')
+    .action(async (options) => {
+    if (options.report) {
+        const cfg = loadConfig();
+        printReport(formatRedactedProviderErrorReport({
+            provider: cfg.provider,
+            model: cfg.model,
+            causyneVersion: pkgVersion
+        }), { title: 'Provider Report' });
+        return;
+    }
+    if (options.probe) {
+        const report = await runZeroSpendByokProbe();
+        printReport(formatByokProbeReport(report), { title: 'Zero-Spend BYOK Probe' });
+        process.exit(report.failedCount > 0 ? 1 : 0);
+    }
     const status = await diagnoseInstallation();
     printReport(formatDoctorReport(status), { title: 'Doctor' });
+});
+program
+    .command('web')
+    .description('Start the foreground local Skybridge web workspace (127.0.0.1 only, nonce-authenticated)')
+    .option('-p, --port <number>', 'Loopback port (0 = ephemeral)', '0')
+    .option('-d, --dir <directory>', 'Workspace folder locked to this Skybridge session')
+    .action(async (options) => {
+    const { startSkybridgeServer } = await import('./web/skybridgeServer.js');
+    const parsedPort = Number.parseInt(String(options.port ?? '0'), 10);
+    const port = Number.isInteger(parsedPort) && parsedPort >= 0 && parsedPort <= 65535 ? parsedPort : 0;
+    const workspaceRoot = options.dir ? resolveUserPath(String(options.dir)) : process.cwd();
+    const handle = await startSkybridgeServer({ workspaceRoot, port });
+    console.log('');
+    console.log('Causyne Local Skybridge running (foreground, 127.0.0.1 only)');
+    console.log(`  Workspace : ${safeDisplay(handle.workspaceRoot)}`);
+    console.log(`  Open URL  : ${handle.url}`);
+    console.log('  Security  : Host/Origin locked · 256-bit nonce · OS sandbox & approvals active');
+    console.log('  Stop      : Press Ctrl+C (exits cleanly, no background daemon)');
+    console.log('');
+    const shutdown = async () => {
+        await handle.close();
+        process.exit(0);
+    };
+    process.once('SIGINT', () => { void shutdown(); });
+    process.once('SIGTERM', () => { void shutdown(); });
 });
 program
     .command('status')

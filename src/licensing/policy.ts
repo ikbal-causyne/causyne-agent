@@ -10,9 +10,22 @@ export const LICENSE_PLAN_KEYS = Object.freeze([
 
 export type LicensePlanKey = (typeof LICENSE_PLAN_KEYS)[number];
 
-export const LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX = 'lemonsqueezy.com';
+export const LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX = 'paddle.com';
+export const LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIXES = Object.freeze([
+  'paddle.com',
+  'dodopayments.com',
+  'causyne.com'
+] as const);
 export const MAX_ENTITLEMENT_RESPONSE_BYTES = 256 * 1024;
 
 export function isValidLicensePlan(plan: unknown): plan is LicensePlanKey {
   return typeof plan === 'string' && (LICENSE_PLAN_KEYS as readonly string[]).includes(plan);
+}
+
+export function isAllowedCheckoutHost(hostname: string): boolean {
+  const host = String(hostname || '').trim().toLowerCase();
+  if (!host) return false;
+  return LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIXES.some(
+    (suffix) => host === suffix || host.endsWith(`.${suffix}`)
+  );
 }

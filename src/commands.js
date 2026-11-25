@@ -19,6 +19,7 @@ import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview
 import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
 import { formatRedactedProviderErrorReport, getRecentProviderDiagnostics } from './providers/byokHttp.js';
+import { formatByokProbeReport, runZeroSpendByokProbe } from './verification/byokSmokeProbe.js';
 import { listSessions, getActiveSessionId, renameSession, getSession } from './sessionStore.js';
 import { serverStatus, grantServer, revokeServer, addServer, removeServer, connectServer, disconnectServer, refreshServer } from './mcp/mcpRegistry.js';
 import { analyzeFiles, formatFindings } from './slopDetector.js';
@@ -2473,8 +2474,8 @@ export const COMMANDS = [
         name: 'doctor',
         aliases: ['health', 'diagnostics'],
         scope: 'local',
-        usage: '/doctor [--report]',
-        description: 'Run environment, provider, and tool health diagnostics (use --report for redacted HTTP errors)',
+        usage: '/doctor [--report|--probe]',
+        description: 'Run environment, provider, and tool health diagnostics (--report for redacted errors, --probe for $0 live test)',
         dialogTitle: 'Doctor',
         run: async (argv, ctx = {}) => {
             const config = loadConfig();
@@ -2486,6 +2487,12 @@ export const COMMANDS = [
                     model: config.model,
                     causyneVersion: getPackageVersion()
                 }));
+            }
+            const wantsProbe = Array.isArray(argv)
+                && argv.some((tok) => tok === '--probe' || tok === 'probe');
+            if (wantsProbe) {
+                const report = await runZeroSpendByokProbe();
+                return ok(formatByokProbeReport(report));
             }
             const lines = ['Causyne Health & Diagnostics', ''];
             const nodeVer = process.version;

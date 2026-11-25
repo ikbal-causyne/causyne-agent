@@ -33,6 +33,10 @@ import {
   formatRedactedProviderErrorReport,
   getRecentProviderDiagnostics
 } from './providers/byokHttp.js';
+import {
+  formatByokProbeReport,
+  runZeroSpendByokProbe
+} from './verification/byokSmokeProbe.js';
 import { listSessions, getActiveSessionId, renameSession, getSession } from './sessionStore.js';
 import {
   serverStatus, grantServer, revokeServer, addServer, removeServer,
@@ -2645,8 +2649,8 @@ export const COMMANDS: SlashCommandDefinition[] = [
     name: 'doctor',
     aliases: ['health', 'diagnostics'],
     scope: 'local',
-    usage: '/doctor [--report]',
-    description: 'Run environment, provider, and tool health diagnostics (use --report for redacted HTTP errors)',
+    usage: '/doctor [--report|--probe]',
+    description: 'Run environment, provider, and tool health diagnostics (--report for redacted errors, --probe for $0 live test)',
     dialogTitle: 'Doctor',
     run: async (argv, ctx = {}) => {
       const config = loadConfig();
@@ -2658,6 +2662,12 @@ export const COMMANDS: SlashCommandDefinition[] = [
           model: config.model,
           causyneVersion: getPackageVersion()
         }));
+      }
+      const wantsProbe = Array.isArray(argv)
+        && argv.some((tok) => tok === '--probe' || tok === 'probe');
+      if (wantsProbe) {
+        const report = await runZeroSpendByokProbe();
+        return ok(formatByokProbeReport(report));
       }
       const lines = ['Causyne Health & Diagnostics', ''];
 

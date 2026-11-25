@@ -23,6 +23,7 @@ function shouldSkipAutoUpdateCheck(argv) {
     if (token === '--') break;
     if (
       token === 'acp'
+      || token === 'web'
       || token === '-p'
       || token === '--print'
       || token === '--output-format'
