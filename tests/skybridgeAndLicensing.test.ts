@@ -618,14 +618,26 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       const extractedAcpFiles = extractSessionTouchedFiles([
         {
           role: 'assistant',
-          content: '',
+          content: `Created [apple](file://${encodeURI(tmpWs)}/blender_apple/red_apple.blend#L1-L20) and [script](file://${encodeURI(tmpWs)}/blender_apple/create_apple.py)`,
           external_actions: [
             { name: 'fs_write', detail: 'alpha.txt', parameters: { path: 'alpha.txt' } },
-            { name: 'fs_edit', detail: '', parameters: { filePath: 'beta.txt' } }
+            { name: 'fs_edit', detail: '', parameters: { filePath: 'beta.txt' } },
+            { name: 'sysRun', detail: `cd "${tmpWs}/.wallpapers" && curl -sL https://example.com/a.jpg -o calm.jpg` }
           ]
+        },
+        {
+          role: 'tool',
+          content: JSON.stringify({ success: true, output: `Atomically wrote 4096 bytes to ${tmpWs}/src/demo.ts` })
         }
       ], tmpWs);
-      assert.deepEqual(extractedAcpFiles, ['alpha.txt', 'beta.txt']);
+      assert.deepEqual(extractedAcpFiles, [
+        '.wallpapers/calm.jpg',
+        'alpha.txt',
+        'beta.txt',
+        'blender_apple/create_apple.py',
+        'blender_apple/red_apple.blend',
+        'src/demo.ts'
+      ]);
       assert.match(htmlSource, /TOKEN_STORE_KEY/);
       assert.match(htmlSource, /syncExpandedStudioWidth/);
       assert.match(htmlSource, /startInlineSessionRename/);

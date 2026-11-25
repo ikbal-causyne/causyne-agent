@@ -241,19 +241,59 @@ function listWorkspaceEntries(workspaceRoot, relDir, query = '') {
 const MUTATING_FILE_TOOLS = new Set([
     'fs_write', 'fs_edit', 'multi_edit', 'apply_patch', 'fs_delete', 'fs_move',
     'write_file', 'edit_file', 'write', 'edit', 'multiedit', 'replace_file_content',
-    'multi_replace_file_content', 'write_to_file', 'create_file', 'document_forge', 'ui_forge'
+    'multi_replace_file_content', 'write_to_file', 'create_file', 'document_forge',
+    'ui_forge', 'screenshot', 'generate_media_via_api', 'code_verify_syntax'
 ]);
-function normalizeWorkspaceRelCandidate(workspaceRoot, raw) {
+const SHELL_TOOLS = new Set(['sysrun', 'bash', 'shell', 'run_command', 'execute_command']);
+function formatByteSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0)
+        return '0 B';
+    if (bytes < 1024)
+        return `${Math.round(bytes)} B`;
+    if (bytes < 1024 * 1024)
+        return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+function normalizeWorkspaceRelCandidate(workspaceRoot, raw, baseDir) {
     if (typeof raw !== 'string')
         return null;
-    const trimmed = raw.trim().replace(/^["'`]+|["'`]+$/g, '');
-    if (!trimmed || trimmed.includes('\0') || trimmed.length > 400)
+    let trimmed = raw.trim().replace(/^["'`]+|["'`]+$/g, '');
+    if (!trimmed || trimmed.includes('\0') || trimmed.length > 500)
         return null;
     if (/^https?:\/\//i.test(trimmed))
+        return null;
+    if (trimmed.toLowerCase().startsWith('file://')) {
+        trimmed = trimmed.slice('file://'.length);
+        const hashIdx = trimmed.indexOf('#');
+        if (hashIdx >= 0)
+            trimmed = trimmed.slice(0, hashIdx);
+        const queryIdx = trimmed.indexOf('?');
+        if (queryIdx >= 0)
+            trimmed = trimmed.slice(0, queryIdx);
+        try {
+            trimmed = decodeURIComponent(trimmed);
+        }
+        catch {
+            // Keep raw decoded string if percent encoding is malformed.
+        }
+    }
+    else {
+        const lineAnchor = trimmed.match(/^(.+?\.[a-zA-Z0-9]{1,8})#L\d+(?:-L?\d+)?$/);
+        if (lineAnchor?.[1])
+            trimmed = lineAnchor[1];
+    }
+    trimmed = trimmed.replace(/[),.;:]+$/g, '').trim();
+    if (!trimmed || trimmed === '.' || trimmed === '/')
         return null;
     let rel = trimmed;
     if (path.isAbsolute(trimmed)) {
         const absNorm = path.resolve(trimmed);
+        if (!isPhysicalPathAllowed(absNorm, [workspaceRoot], false))
+            return null;
+        rel = path.relative(workspaceRoot, absNorm);
+    }
+    else if (baseDir && path.isAbsolute(baseDir)) {
+        const absNorm = path.resolve(baseDir, trimmed);
         if (!isPhysicalPathAllowed(absNorm, [workspaceRoot], false))
             return null;
         rel = path.relative(workspaceRoot, absNorm);
@@ -263,6 +303,106 @@ function normalizeWorkspaceRelCandidate(workspaceRoot, raw) {
         return null;
     const normalized = path.relative(workspaceRoot, abs).split(path.sep).join('/');
     return normalized && !normalized.startsWith('..') ? normalized : null;
+}
+function tokenizeSimpleShell(command) {
+    const tokens = [];
+    let current = '';
+    let quote = null;
+    for (let i = 0; i < command.length; i += 1) {
+        const ch = command[i];
+        if (quote) {
+            if (ch === quote) {
+                quote = null;
+            }
+            else {
+                current += ch;
+            }
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            continue;
+        }
+        if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            if (current) {
+                tokens.push(current);
+                current = '';
+            }
+            continue;
+        }
+        if (ch === ';' || ch === '|') {
+            if (current) {
+                tokens.push(current);
+                current = '';
+            }
+            tokens.push(ch);
+            continue;
+        }
+        if (ch === '&' && command[i + 1] === '&') {
+            if (current) {
+                tokens.push(current);
+                current = '';
+            }
+            tokens.push('&&');
+            i += 1;
+            continue;
+        }
+        current += ch;
+    }
+    if (current)
+        tokens.push(current);
+    return tokens;
+}
+function extractShellWriteTargets(command, workspaceRoot, cwdArg) {
+    const found = [];
+    let curDir = workspaceRoot;
+    if (typeof cwdArg === 'string' && cwdArg.trim()) {
+        const resolvedCwd = path.isAbsolute(cwdArg.trim())
+            ? path.resolve(cwdArg.trim())
+            : path.resolve(workspaceRoot, cwdArg.trim());
+        if (isPhysicalPathAllowed(resolvedCwd, [workspaceRoot], false)) {
+            curDir = resolvedCwd;
+        }
+    }
+    const tokens = tokenizeSimpleShell(command);
+    for (let i = 0; i < tokens.length; i += 1) {
+        const tok = tokens[i];
+        if (tok === 'cd' && tokens[i + 1]) {
+            const nextDir = tokens[i + 1];
+            const resolved = path.isAbsolute(nextDir)
+                ? path.resolve(nextDir)
+                : path.resolve(curDir, nextDir);
+            if (isPhysicalPathAllowed(resolved, [workspaceRoot], false)) {
+                curDir = resolved;
+            }
+            i += 1;
+            continue;
+        }
+        if ((tok === '-o' || tok === '--output' || tok === '>' || tok === '>>' || tok === 'tee') && tokens[i + 1]) {
+            const target = tokens[i + 1];
+            if (target !== '/dev/null' && !target.startsWith('-')) {
+                const norm = normalizeWorkspaceRelCandidate(workspaceRoot, target, curDir);
+                if (norm)
+                    found.push(norm);
+            }
+            i += 1;
+            continue;
+        }
+        if (tok === 'screencapture') {
+            let j = i + 1;
+            while (j < tokens.length && tokens[j] !== ';' && tokens[j] !== '&&' && tokens[j] !== '|') {
+                const arg = tokens[j];
+                if (!arg.startsWith('-')) {
+                    const norm = normalizeWorkspaceRelCandidate(workspaceRoot, arg, curDir);
+                    if (norm)
+                        found.push(norm);
+                }
+                j += 1;
+            }
+            i = j - 1;
+        }
+    }
+    return found;
 }
 function extractPatchPathsFromText(patchText) {
     const found = [];
@@ -276,13 +416,77 @@ function extractPatchPathsFromText(patchText) {
     }
     return found;
 }
-export function extractSessionTouchedFiles(messages, workspaceRoot) {
-    const touched = new Set();
-    const addCandidate = (raw) => {
-        const norm = normalizeWorkspaceRelCandidate(workspaceRoot, raw);
-        if (norm)
-            touched.add(norm);
+function buildSynthesizedWriteHunk(content) {
+    const lines = content.split(/\r?\n/);
+    if (lines.length > 0 && lines[lines.length - 1] === '')
+        lines.pop();
+    const capped = lines.slice(0, 140).map((ln) => `+${ln}`);
+    if (lines.length > 140)
+        capped.push(`+... (${lines.length - 140} more lines)`);
+    return {
+        additions: lines.length,
+        hunks: capped.length > 0
+            ? [{ header: `@@ -0,0 +1,${lines.length} @@`, lines: capped }]
+            : []
     };
+}
+function buildSynthesizedEditHunk(oldStr, newStr) {
+    const oldLines = oldStr ? oldStr.split(/\r?\n/) : [];
+    const newLines = newStr ? newStr.split(/\r?\n/) : [];
+    const diffLines = [];
+    for (const ln of oldLines.slice(0, 80))
+        diffLines.push(`-${ln}`);
+    for (const ln of newLines.slice(0, 80))
+        diffLines.push(`+${ln}`);
+    return {
+        additions: newLines.length,
+        deletions: oldLines.length,
+        hunks: diffLines.length > 0
+            ? [{ header: `@@ -1,${oldLines.length} +1,${newLines.length} @@`, lines: diffLines }]
+            : []
+    };
+}
+function hasFileExtension(relPath) {
+    const base = path.posix.basename(relPath);
+    const dot = base.lastIndexOf('.');
+    return dot > 0 && dot < base.length - 1 && base.length - dot <= 10;
+}
+export function extractSessionFileEvidence(messages, workspaceRoot) {
+    const evidenceMap = new Map();
+    const touchedDirs = new Set();
+    const recordFile = (raw, opts = {}) => {
+        const norm = normalizeWorkspaceRelCandidate(workspaceRoot, raw, opts.baseDir);
+        if (!norm)
+            return;
+        const dir = path.posix.dirname(norm);
+        if (dir && dir !== '.')
+            touchedDirs.add(dir);
+        const existing = evidenceMap.get(norm);
+        if (!existing) {
+            evidenceMap.set(norm, {
+                path: norm,
+                status: opts.status ?? 'added',
+                bytesWritten: opts.bytesWritten,
+                additions: opts.additions ?? 0,
+                deletions: opts.deletions ?? 0,
+                hunks: opts.hunks ?? []
+            });
+            return;
+        }
+        if (opts.status === 'deleted')
+            existing.status = 'deleted';
+        else if (opts.status === 'modified' && existing.status !== 'added')
+            existing.status = 'modified';
+        if (typeof opts.bytesWritten === 'number' && opts.bytesWritten > 0) {
+            existing.bytesWritten = opts.bytesWritten;
+        }
+        if (opts.hunks && opts.hunks.length > 0) {
+            existing.hunks = opts.hunks;
+            existing.additions = opts.additions ?? existing.additions;
+            existing.deletions = opts.deletions ?? existing.deletions;
+        }
+    };
+    const assistantBacktickCandidates = [];
     for (const msg of messages) {
         const rec = msg;
         const toolCalls = Array.isArray(rec.tool_calls)
@@ -291,7 +495,7 @@ export function extractSessionTouchedFiles(messages, workspaceRoot) {
         for (const tc of toolCalls) {
             const fn = (tc.function && typeof tc.function === 'object' ? tc.function : tc);
             const name = typeof fn.name === 'string' ? fn.name.trim().toLowerCase() : '';
-            if (!name || !MUTATING_FILE_TOOLS.has(name))
+            if (!name)
                 continue;
             let args = null;
             if (typeof fn.arguments === 'string') {
@@ -309,17 +513,58 @@ export function extractSessionTouchedFiles(messages, workspaceRoot) {
             }
             if (!args)
                 continue;
-            for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'target_path', 'filename', 'file', 'destination', 'outputFile', 'output_path']) {
-                addCandidate(args[key]);
+            if (MUTATING_FILE_TOOLS.has(name)) {
+                const status = name === 'fs_delete'
+                    ? 'deleted'
+                    : name.includes('edit') || name.includes('patch') || name.includes('replace')
+                        ? 'modified'
+                        : 'added';
+                const synthWrite = typeof args.content === 'string' && args.content.length > 0
+                    ? buildSynthesizedWriteHunk(args.content)
+                    : null;
+                const synthEdit = (typeof args.old_string === 'string' || typeof args.new_string === 'string')
+                    && (Boolean(args.old_string) || Boolean(args.new_string))
+                    ? buildSynthesizedEditHunk(String(args.old_string || ''), String(args.new_string || ''))
+                    : null;
+                const pathKeys = [
+                    'path', 'filePath', 'file_path', 'targetFile', 'target_path',
+                    'filename', 'file', 'destination', 'outputFile', 'output_path', 'outputPath'
+                ];
+                for (const key of pathKeys) {
+                    recordFile(args[key], {
+                        status,
+                        additions: synthWrite?.additions ?? synthEdit?.additions ?? 0,
+                        deletions: synthEdit?.deletions ?? 0,
+                        hunks: synthWrite?.hunks ?? synthEdit?.hunks ?? []
+                    });
+                }
+                if (typeof args.patch === 'string') {
+                    for (const p of extractPatchPathsFromText(args.patch)) {
+                        recordFile(p, { status: 'modified' });
+                    }
+                }
+                if (Array.isArray(args.edits)) {
+                    for (const ed of args.edits) {
+                        if (ed && typeof ed === 'object') {
+                            recordFile(ed.path, { status: 'modified' });
+                        }
+                    }
+                }
             }
-            if (typeof args.patch === 'string') {
-                for (const p of extractPatchPathsFromText(args.patch))
-                    addCandidate(p);
+            else if (name === 'browser_act' && Array.isArray(args.actions)) {
+                for (const a of args.actions) {
+                    if (a && typeof a === 'object') {
+                        const actObj = a;
+                        if (actObj.filePath)
+                            recordFile(actObj.filePath, { status: 'modified' });
+                        if (actObj.outputPath)
+                            recordFile(actObj.outputPath, { status: 'added' });
+                    }
+                }
             }
-            if (Array.isArray(args.edits)) {
-                for (const ed of args.edits) {
-                    if (ed && typeof ed === 'object')
-                        addCandidate(ed.path);
+            else if (SHELL_TOOLS.has(name) && typeof args.command === 'string') {
+                for (const p of extractShellWriteTargets(args.command, workspaceRoot, args.cwd)) {
+                    recordFile(p, { status: 'added' });
                 }
             }
         }
@@ -328,20 +573,85 @@ export function extractSessionTouchedFiles(messages, workspaceRoot) {
             : [];
         for (const act of extActions) {
             const name = typeof act.name === 'string' ? act.name.trim().toLowerCase() : '';
-            if (!name || !MUTATING_FILE_TOOLS.has(name))
+            if (!name)
                 continue;
-            addCandidate(act.detail);
-            const params = act.parameters && typeof act.parameters === 'object'
-                ? act.parameters
-                : null;
-            if (params) {
-                for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'filename', 'file', 'destination']) {
-                    addCandidate(params[key]);
+            if (MUTATING_FILE_TOOLS.has(name)) {
+                recordFile(act.detail, { status: name.includes('edit') ? 'modified' : 'added' });
+                const params = act.parameters && typeof act.parameters === 'object'
+                    ? act.parameters
+                    : null;
+                if (params) {
+                    for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'filename', 'file', 'destination', 'outputPath']) {
+                        recordFile(params[key], { status: name.includes('edit') ? 'modified' : 'added' });
+                    }
+                }
+            }
+            else if (SHELL_TOOLS.has(name) && typeof act.detail === 'string') {
+                for (const p of extractShellWriteTargets(act.detail, workspaceRoot)) {
+                    recordFile(p, { status: 'added' });
+                }
+            }
+        }
+        const rawText = typeof msg.content === 'string' ? msg.content : '';
+        if (msg.role === 'tool' && rawText) {
+            let toolText = rawText;
+            try {
+                const parsed = JSON.parse(rawText);
+                if (parsed && typeof parsed === 'object' && typeof parsed.output === 'string') {
+                    toolText = parsed.output;
+                }
+            }
+            catch {
+                // Keep raw plain text tool output.
+            }
+            for (const m of toolText.matchAll(/Atomically wrote (\d+) bytes to ([^\r\n"'}\\]+)/g)) {
+                recordFile(m[2], { status: 'added', bytesWritten: Number(m[1]) || undefined });
+            }
+            for (const m of toolText.matchAll(/Saved (\d+)-byte screenshot to ([^\r\n"'}\\]+)/g)) {
+                recordFile(m[2], { status: 'added', bytesWritten: Number(m[1]) || undefined });
+            }
+            for (const m of toolText.matchAll(/(?:Successfully edited|Successfully wrote|Created file|Patched)\s+([^\r\n"'}\\]+)/g)) {
+                recordFile(m[1], { status: 'modified' });
+            }
+        }
+        if (msg.role === 'assistant' && rawText) {
+            for (const m of rawText.matchAll(/file:\/\/[^\s)\]"'<>]+/g)) {
+                recordFile(m[0], { status: 'added' });
+            }
+            for (const m of rawText.matchAll(/`([^`\r\n]{3,240})`/g)) {
+                const candidate = m[1];
+                if (candidate.includes('/') && hasFileExtension(candidate) && !candidate.includes(' ')) {
+                    assistantBacktickCandidates.push(candidate);
                 }
             }
         }
     }
-    return [...touched].sort();
+    for (const cand of assistantBacktickCandidates) {
+        const norm = normalizeWorkspaceRelCandidate(workspaceRoot, cand);
+        if (!norm || evidenceMap.has(norm))
+            continue;
+        const dir = path.posix.dirname(norm);
+        const abs = resolveWorkspaceRelativePath(workspaceRoot, norm);
+        const inTouchedDir = Boolean(dir && dir !== '.' && touchedDirs.has(dir));
+        const existsUntrackedDotAsset = Boolean(abs && norm.startsWith('.') && fs.existsSync(abs));
+        if (inTouchedDir || existsUntrackedDotAsset) {
+            recordFile(norm, { status: 'added' });
+        }
+    }
+    // Drop bare parent directories when concrete child files in that directory are present.
+    const allPaths = [...evidenceMap.keys()];
+    for (const p of allPaths) {
+        if (!hasFileExtension(p)) {
+            const prefix = `${p}/`;
+            if (allPaths.some((other) => other.startsWith(prefix))) {
+                evidenceMap.delete(p);
+            }
+        }
+    }
+    return evidenceMap;
+}
+export function extractSessionTouchedFiles(messages, workspaceRoot) {
+    return [...extractSessionFileEvidence(messages, workspaceRoot).keys()].sort();
 }
 function summarizeArgsTarget(args) {
     if (!args)
@@ -953,50 +1263,117 @@ export async function startSkybridgeServer(options = {}) {
                 const sessionId = SAFE_SESSION_ID_RE.test(rawSessionId) ? rawSessionId : '';
                 const rawScope = (parsedUrl.searchParams.get('scope') || '').trim().toLowerCase();
                 const scope = rawScope === 'session' && sessionId ? 'session' : 'workspace';
-                const sessionTouchedSet = new Set();
+                const sessionEvidenceMap = new Map();
                 if (sessionId) {
                     const sess = getSession(sessionId);
                     if (sess && workspaceMatchesSession(sess.workspace, workspaceRoot)) {
-                        for (const p of extractSessionTouchedFiles(sess.messages, workspaceRoot)) {
-                            sessionTouchedSet.add(p);
+                        for (const [p, ev] of extractSessionFileEvidence(sess.messages, workspaceRoot)) {
+                            sessionEvidenceMap.set(p, ev);
                         }
                     }
                     for (const p of sessionTouchedFilesMap.get(sessionId) ?? []) {
-                        sessionTouchedSet.add(p);
+                        if (!sessionEvidenceMap.has(p)) {
+                            sessionEvidenceMap.set(p, {
+                                path: p,
+                                status: 'modified',
+                                additions: 0,
+                                deletions: 0,
+                                hunks: []
+                            });
+                        }
                     }
                 }
+                const buildNonGitSessionEntry = (rel, ev, isGit) => {
+                    const abs = resolveWorkspaceRelativePath(workspaceRoot, rel);
+                    let existsOnDisk = false;
+                    let diskSize = 0;
+                    let diskHunks = [];
+                    let diskAdditions = 0;
+                    if (abs) {
+                        try {
+                            const st = fs.lstatSync(abs);
+                            if (!st.isSymbolicLink() && st.isFile()) {
+                                existsOnDisk = true;
+                                diskSize = st.size;
+                                if (st.size > 0 && st.size <= 48 * 1024 && (!ev || ev.hunks.length === 0)) {
+                                    const buf = fs.readFileSync(abs);
+                                    if (!buf.includes(0)) {
+                                        const synth = buildSynthesizedWriteHunk(buf.toString('utf8'));
+                                        diskHunks = synth.hunks;
+                                        diskAdditions = synth.additions;
+                                    }
+                                }
+                            }
+                        }
+                        catch {
+                            existsOnDisk = false;
+                        }
+                    }
+                    const hunks = ev && ev.hunks.length > 0 ? ev.hunks : diskHunks;
+                    const additions = ev && ev.additions > 0 ? ev.additions : diskAdditions;
+                    const deletions = ev ? ev.deletions : 0;
+                    const status = ev?.status ?? (existsOnDisk ? 'modified' : 'added');
+                    let note;
+                    if (existsOnDisk) {
+                        if (hunks.length === 0) {
+                            note = diskSize > 0
+                                ? `On disk (${formatByteSize(diskSize)}) · ${isGit ? 'committed or binary asset' : 'workspace file'}`
+                                : (isGit ? 'Clean on disk' : 'Touched in this conversation');
+                        }
+                    }
+                    else {
+                        const sizeLabel = ev?.bytesWritten ? ` (${formatByteSize(ev.bytesWritten)})` : '';
+                        note = `Written in this chat${sizeLabel} · no longer on disk`;
+                    }
+                    return {
+                        path: rel,
+                        status,
+                        additions,
+                        deletions,
+                        inGitDiff: false,
+                        existsOnDisk,
+                        note,
+                        hunks
+                    };
+                };
                 try {
                     const report = collectWorkingTreeDiff(workspaceRoot, { staged });
-                    const mappedWorkspaceFiles = report.files.slice(0, 60).map((f) => ({
-                        path: f.displayPath,
-                        status: f.status,
-                        additions: f.additions,
-                        deletions: f.deletions,
-                        inGitDiff: true,
-                        hunks: f.hunks.slice(0, 20).map((h) => ({
-                            header: h.header,
-                            lines: h.lines.slice(0, 200)
-                        }))
-                    }));
-                    const matchedSessionGitFiles = mappedWorkspaceFiles.filter((f) => sessionTouchedSet.has(f.path));
+                    const mappedWorkspaceFiles = report.files.slice(0, 60).map((f) => {
+                        const abs = resolveWorkspaceRelativePath(workspaceRoot, f.displayPath);
+                        let existsOnDisk = f.status !== 'deleted';
+                        let note;
+                        if (abs && f.hunks.length === 0 && f.status !== 'deleted') {
+                            try {
+                                const st = fs.lstatSync(abs);
+                                existsOnDisk = st.isFile();
+                                if (existsOnDisk)
+                                    note = `Binary or large asset (${formatByteSize(st.size)})`;
+                            }
+                            catch {
+                                existsOnDisk = false;
+                            }
+                        }
+                        return {
+                            path: f.displayPath,
+                            status: f.status,
+                            additions: f.additions,
+                            deletions: f.deletions,
+                            inGitDiff: true,
+                            existsOnDisk,
+                            note,
+                            hunks: f.hunks.slice(0, 20).map((h) => ({
+                                header: h.header,
+                                lines: h.lines.slice(0, 200)
+                            }))
+                        };
+                    });
+                    const matchedSessionGitFiles = mappedWorkspaceFiles.filter((f) => sessionEvidenceMap.has(f.path));
                     const matchedPaths = new Set(matchedSessionGitFiles.map((f) => f.path));
-                    const committedOrUntrackedSessionFiles = [];
-                    for (const rel of [...sessionTouchedSet].sort()) {
-                        if (matchedPaths.has(rel))
-                            continue;
-                        const abs = resolveWorkspaceRelativePath(workspaceRoot, rel);
-                        const exists = Boolean(abs && fs.existsSync(abs));
-                        committedOrUntrackedSessionFiles.push({
-                            path: rel,
-                            status: exists ? 'modified' : 'deleted',
-                            additions: 0,
-                            deletions: 0,
-                            inGitDiff: false,
-                            note: exists ? 'No uncommitted git diff (committed or clean on disk)' : 'File no longer exists on disk',
-                            hunks: []
-                        });
-                    }
-                    const sessionFiles = [...matchedSessionGitFiles, ...committedOrUntrackedSessionFiles];
+                    const extraSessionFiles = [...sessionEvidenceMap.keys()]
+                        .sort()
+                        .filter((rel) => !matchedPaths.has(rel))
+                        .map((rel) => buildNonGitSessionEntry(rel, sessionEvidenceMap.get(rel), true));
+                    const sessionFiles = [...matchedSessionGitFiles, ...extraSessionFiles];
                     const returnedFiles = scope === 'session' ? sessionFiles : mappedWorkspaceFiles;
                     const totalAdditions = scope === 'session'
                         ? returnedFiles.reduce((sum, f) => sum + f.additions, 0)
@@ -1019,15 +1396,9 @@ export async function startSkybridgeServer(options = {}) {
                     });
                 }
                 catch {
-                    const fallbackSessionFiles = [...sessionTouchedSet].sort().map((rel) => ({
-                        path: rel,
-                        status: 'modified',
-                        additions: 0,
-                        deletions: 0,
-                        inGitDiff: false,
-                        note: 'Touched in this conversation (not a Git repository)',
-                        hunks: []
-                    }));
+                    const fallbackSessionFiles = [...sessionEvidenceMap.keys()]
+                        .sort()
+                        .map((rel) => buildNonGitSessionEntry(rel, sessionEvidenceMap.get(rel), false));
                     sendJson(res, 200, {
                         ok: true,
                         isGitRepo: false,
@@ -1036,8 +1407,8 @@ export async function startSkybridgeServer(options = {}) {
                         staged,
                         workspaceFileCount: 0,
                         sessionFileCount: fallbackSessionFiles.length,
-                        totalAdditions: 0,
-                        totalDeletions: 0,
+                        totalAdditions: fallbackSessionFiles.reduce((sum, f) => sum + f.additions, 0),
+                        totalDeletions: fallbackSessionFiles.reduce((sum, f) => sum + f.deletions, 0),
                         truncated: false,
                         files: scope === 'session' ? fallbackSessionFiles : []
                     });

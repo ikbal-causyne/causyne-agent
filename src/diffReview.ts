@@ -284,7 +284,19 @@ export function collectWorkingTreeDiff(
         const absPath = path.join(repoRoot, relPath);
         try {
           const stat = fs.lstatSync(absPath);
-          if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 64 * 1024) continue;
+          if (stat.isSymbolicLink() || !stat.isFile()) continue;
+          if (stat.size > 64 * 1024) {
+            files.push({
+              oldPath: relPath,
+              newPath: relPath,
+              displayPath: relPath,
+              status: 'added',
+              additions: 0,
+              deletions: 0,
+              hunks: []
+            });
+            continue;
+          }
           const buf = fs.readFileSync(absPath);
           if (buf.includes(0)) {
             files.push({
