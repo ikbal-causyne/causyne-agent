@@ -253,7 +253,6 @@ export class AcpProvider extends LLMProvider {
         const calls = [];
         if (!text || typeof text !== 'string')
             return calls;
-
         for (const parsed of extractToolCallJsonObjects(text)) {
             const fnObj = parsed.function && typeof parsed.function === 'object'
                 ? parsed.function

@@ -485,12 +485,12 @@ export class AcpClient {
             let index = this.buffer.indexOf('\n');
             while (index >= 0 && !this.closed && !this.exitError) {
                 const rawLine = this.buffer.slice(0, index);
-            if (Buffer.byteLength(rawLine, 'utf8') > MAX_JSONRPC_BUFFER_BYTES) {
-                this.buffer = '';
-                this.failAll(new Error('agent output frame exceeded maximum size'));
-                break;
-            }
-            const line = rawLine.replace(/^\uFEFF/, '').trim();
+                if (Buffer.byteLength(rawLine, 'utf8') > MAX_JSONRPC_BUFFER_BYTES) {
+                    this.buffer = '';
+                    this.failAll(new Error('agent output frame exceeded maximum size'));
+                    break;
+                }
+                const line = rawLine.replace(/^\uFEFF/, '').trim();
                 this.buffer = this.buffer.slice(index + 1);
                 if (line) {
                     try {
