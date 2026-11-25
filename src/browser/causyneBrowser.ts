@@ -383,6 +383,7 @@ interface BrowserPage {
   route(pattern: string, handler: (route: BrowserRoute) => Promise<void>): Promise<void>;
   setDefaultTimeout(milliseconds: number): void;
   setViewportSize?(size: { width: number; height: number }): Promise<void>;
+  viewportSize?(): { width: number; height: number } | null;
   goBack(options?: Record<string, unknown>): Promise<unknown>;
   goForward(options?: Record<string, unknown>): Promise<unknown>;
   reload(options?: Record<string, unknown>): Promise<unknown>;
@@ -392,13 +393,56 @@ interface BrowserPage {
   keyboard: {
     press(key: string): Promise<void>;
     type?(text: string, options?: { delay?: number }): Promise<void>;
+    insertText?(text: string): Promise<void>;
   };
   mouse: {
     wheel(deltaX: number, deltaY: number): Promise<void>;
+    click?(x: number, y: number, options?: Record<string, unknown>): Promise<void>;
+    dblclick?(x: number, y: number, options?: Record<string, unknown>): Promise<void>;
     move?(x: number, y: number): Promise<void>;
     down?(): Promise<void>;
     up?(): Promise<void>;
   };
+}
+
+export interface BrowserCookieRecord {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string | undefined;
+  expires?: number | undefined;
+  httpOnly?: boolean | undefined;
+  secure?: boolean | undefined;
+  sameSite?: 'Strict' | 'Lax' | 'None' | undefined;
+}
+
+export interface LiveBrowserTabSummary {
+  tabId: string;
+  url: string;
+  title: string;
+  active: boolean;
+}
+
+export interface LiveBrowserFrame {
+  active: boolean;
+  tabId: string | null;
+  url: string;
+  title: string;
+  width: number;
+  height: number;
+  tabs: LiveBrowserTabSummary[];
+  imageBase64: string | null;
+  mimeType: 'image/jpeg' | 'image/png';
+}
+
+export interface LiveBrowserInteraction {
+  kind: 'click' | 'dblclick' | 'wheel' | 'type' | 'key';
+  x?: number | undefined;
+  y?: number | undefined;
+  deltaX?: number | undefined;
+  deltaY?: number | undefined;
+  text?: string | undefined;
+  key?: string | undefined;
 }
 
 interface BrowserSession {
@@ -408,6 +452,8 @@ interface BrowserSession {
   isConnected?(): boolean;
   route?(pattern: string, handler: (route: BrowserRoute) => Promise<void>): Promise<void>;
   on?(event: 'page', handler: (page: BrowserPage) => void): void;
+  addCookies?(cookies: BrowserCookieRecord[]): Promise<void>;
+  cookies?(urls?: string | string[]): Promise<BrowserCookieRecord[]>;
 }
 
 interface BrowserEngineModule {
@@ -1153,6 +1199,170 @@ export class CausyneBrowser {
     this.securedPages = new WeakSet<object>();
     this.pageStates = new WeakMap<object, TabState>();
     if (session) await session.close().catch(() => {});
+  }
+
+  isActive(): boolean {
+    return this.isSessionHealthy();
+  }
+
+  async captureLiveFrame(options: { ensureStarted?: boolean | undefined } = {}): Promise<LiveBrowserFrame> {
+    return this.enqueueOperation(() => this.captureLiveFrameUnlocked(options));
+  }
+
+  private async captureLiveFrameUnlocked(options: { ensureStarted?: boolean | undefined } = {}): Promise<LiveBrowserFrame> {
+    if (!this.isSessionHealthy()) {
+      if (!options.ensureStarted) {
+        return {
+          active: false,
+          tabId: null,
+          url: '',
+          title: '',
+          width: 1280,
+          height: 800,
+          tabs: [],
+          imageBase64: null,
+          mimeType: 'image/jpeg'
+        };
+      }
+      await this.start();
+    }
+    const state = await this.activeTab();
+    const vp = typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
+    const width = vp?.width ?? 1280;
+    const height = vp?.height ?? 800;
+    const tabs: LiveBrowserTabSummary[] = [];
+    for (const tab of this.tabs.values()) {
+      if (tab.page.isClosed() || tab.crashed) continue;
+      tabs.push({
+        tabId: tab.id,
+        url: tab.page.url(),
+        title: await this.safePageTitle(tab.page),
+        active: tab.id === state.id
+      });
+    }
+    let imageBase64: string | null = null;
+    let mimeType: 'image/jpeg' | 'image/png' = 'image/jpeg';
+    try {
+      const buf = await state.page.screenshot({ type: 'jpeg', quality: 72, timeout: 5000 });
+      imageBase64 = buf.toString('base64');
+    } catch {
+      try {
+        const buf = await state.page.screenshot({ type: 'png', timeout: 5000 });
+        imageBase64 = buf.toString('base64');
+        mimeType = 'image/png';
+      } catch {
+        imageBase64 = null;
+      }
+    }
+    this.touch();
+    return {
+      active: true,
+      tabId: state.id,
+      url: state.page.url(),
+      title: await this.safePageTitle(state.page),
+      width,
+      height,
+      tabs,
+      imageBase64,
+      mimeType
+    };
+  }
+
+  async interactAt(input: LiveBrowserInteraction): Promise<LiveBrowserFrame> {
+    return this.enqueueOperation(async () => {
+      await this.start();
+      const state = await this.activeTab();
+      const vp = typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
+      const maxW = vp?.width ?? 1280;
+      const maxH = vp?.height ?? 800;
+      const clamp = (val: unknown, lo: number, hi: number): number => {
+        const n = typeof val === 'number' && Number.isFinite(val) ? val : 0;
+        return Math.max(lo, Math.min(hi, Math.round(n)));
+      };
+
+      if (input.kind === 'click' || input.kind === 'dblclick') {
+        const x = clamp(input.x, 0, maxW);
+        const y = clamp(input.y, 0, maxH);
+        if (input.kind === 'dblclick' && typeof state.page.mouse.dblclick === 'function') {
+          await state.page.mouse.dblclick(x, y);
+        } else if (typeof state.page.mouse.click === 'function') {
+          await state.page.mouse.click(x, y);
+        } else if (state.page.mouse.move && state.page.mouse.down && state.page.mouse.up) {
+          await state.page.mouse.move(x, y);
+          await state.page.mouse.down();
+          await state.page.mouse.up();
+        }
+        await state.page.waitForTimeout(180);
+      } else if (input.kind === 'wheel') {
+        const dx = clamp(input.deltaX, -1200, 1200);
+        const dy = clamp(input.deltaY, -1600, 1600);
+        await state.page.mouse.wheel(dx, dy);
+        await state.page.waitForTimeout(120);
+      } else if (input.kind === 'type') {
+        const text = typeof input.text === 'string' ? input.text.slice(0, 2000) : '';
+        if (text) {
+          if (typeof state.page.keyboard.insertText === 'function') {
+            await state.page.keyboard.insertText(text);
+          } else if (typeof state.page.keyboard.type === 'function') {
+            await state.page.keyboard.type(text, { delay: 12 });
+          }
+          await state.page.waitForTimeout(100);
+        }
+      } else if (input.kind === 'key') {
+        const key = normalizeBrowserKey(String(input.key || 'Enter'));
+        await state.page.keyboard.press(key);
+        await state.page.waitForTimeout(140);
+      }
+      state.refs.clear();
+      return this.captureLiveFrameUnlocked({ ensureStarted: true });
+    });
+  }
+
+  async importCookies(cookies: BrowserCookieRecord[]): Promise<{ imported: number }> {
+    return this.enqueueOperation(async () => {
+      await this.start();
+      if (!this.session || typeof this.session.addCookies !== 'function') {
+        throw new Error('Active browser engine does not support cookie session import.');
+      }
+      const sanitized: BrowserCookieRecord[] = [];
+      for (const item of cookies.slice(0, 200)) {
+        if (!item || typeof item.name !== 'string' || typeof item.value !== 'string' || typeof item.domain !== 'string') {
+          continue;
+        }
+        const name = item.name.trim();
+        const domain = item.domain.trim();
+        if (!name || !domain || domain.includes('\0') || name.includes('\0')) continue;
+        const entry: BrowserCookieRecord = {
+          name,
+          value: item.value,
+          domain,
+          path: typeof item.path === 'string' && item.path.startsWith('/') ? item.path : '/'
+        };
+        if (typeof item.expires === 'number' && Number.isFinite(item.expires) && item.expires > 0) {
+          entry.expires = item.expires;
+        }
+        if (typeof item.httpOnly === 'boolean') entry.httpOnly = item.httpOnly;
+        if (typeof item.secure === 'boolean') entry.secure = item.secure;
+        if (item.sameSite === 'Strict' || item.sameSite === 'Lax' || item.sameSite === 'None') {
+          entry.sameSite = item.sameSite;
+        }
+        sanitized.push(entry);
+      }
+      if (sanitized.length > 0) {
+        await this.session.addCookies(sanitized);
+      }
+      this.touch();
+      return { imported: sanitized.length };
+    });
+  }
+
+  async exportSessionCookies(url?: string): Promise<BrowserCookieRecord[]> {
+    return this.enqueueOperation(async () => {
+      if (!this.isSessionHealthy() || !this.session || typeof this.session.cookies !== 'function') {
+        return [];
+      }
+      return url ? this.session.cookies([url]) : this.session.cookies();
+    });
   }
 
   private isSessionHealthy(): boolean {

@@ -51,6 +51,20 @@ import { auditLog } from '../auditLog.js';
 import { getPackageVersion } from '../version.js';
 import { formatRedactedProviderErrorReport, redactProviderSecrets } from '../providers/byokHttp.js';
 import { isIgnoredByCausyneIgnore } from '../ignoreRules.js';
+import { listCommands, parseCommand, runCommand } from '../commands.js';
+import { formatByokProbeReport, runZeroSpendByokProbe } from '../verification/byokSmokeProbe.js';
+import { listGroups } from '../checkpoints.js';
+import { listCompiledSkills } from '../skillsManager.js';
+import { serverStatus } from '../mcp/mcpRegistry.js';
+import { listAllPeers } from '../acp/peerProfiles.js';
+import { listWorktrees } from '../worktreeManager.js';
+import { backgroundTaskManager } from '../backgroundTasks.js';
+import { causyneBrowser, expandSearchMacro } from '../browser/causyneBrowser.js';
+import {
+  discoverLocalCdpTabs,
+  importExplicitUserBrowserData,
+  syncLocalCdpTabToCausyne
+} from './skybridgeBrowserBridge.js';
 import { renderSkybridgeHtml } from './skybridgeUi.js';
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -410,6 +424,7 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
   let boundPort = requestedPort;
   let activeLoop: SkybridgeLoopLike | null = null;
   let taskCounter = 0;
+  let browserControlOwner: 'human' | 'agent' = 'human';
 
   const server = http.createServer(async (req, res) => {
     const hostHeader = req.headers.host;
@@ -750,6 +765,350 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
         return;
       }
 
+      if (req.method === 'POST' && pathname === '/api/doctor/probe') {
+        const report = await runZeroSpendByokProbe();
+        sendJson(res, 200, {
+          ok: true,
+          report: formatByokProbeReport(report),
+          summary: {
+            testedCount: report.testedCount,
+            passedCount: report.passedCount,
+            failedCount: report.failedCount,
+            skippedCount: report.skippedCount
+          }
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/config/key') {
+        const body = await readJsonBody(req);
+        const provider = typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
+        const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+        const forbidden = new Set(['__proto__', 'constructor', 'prototype']);
+        if (!provider || forbidden.has(provider) || !SAFE_PROVIDER_RE.test(provider)) {
+          sendJson(res, 400, { error: 'Valid provider identifier is required.' });
+          return;
+        }
+        if (!apiKey || apiKey.length < 4 || apiKey.length > 512) {
+          sendJson(res, 400, { error: 'API key must be between 4 and 512 characters.' });
+          return;
+        }
+        const config = loadConfig();
+        const existingKeys = config.providerKeys && typeof config.providerKeys === 'object' && !Array.isArray(config.providerKeys)
+          ? { ...(config.providerKeys as Record<string, string>) }
+          : {};
+        existingKeys[provider] = apiKey;
+        config.providerKeys = existingKeys;
+        if (String(config.provider || '').trim().toLowerCase() === provider || body.activate === true) {
+          applyProviderOverrides(config, provider, typeof body.model === 'string' ? body.model.trim() : undefined);
+        }
+        saveConfig(config);
+        auditLog.log({ event: 'skybridge_vault_key_saved', provider });
+        sendJson(res, 200, {
+          ok: true,
+          provider,
+          configured: true,
+          activeProvider: config.provider || 'unconfigured',
+          activeModel: config.model || DEFAULT_MODEL_BY_PROVIDER[String(config.provider || '')] || 'default'
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/commands') {
+        const commands = listCommands('terminal').map((cmd) => ({
+          name: cmd.name,
+          aliases: cmd.aliases ?? [],
+          usage: cmd.usage,
+          description: cmd.description
+        }));
+        sendJson(res, 200, { ok: true, commands });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/command') {
+        const body = await readJsonBody(req);
+        let cmdName = '';
+        let cmdArgv: string[] = [];
+        if (typeof body.input === 'string' && body.input.trim()) {
+          const rawLine = body.input.trim().startsWith('/') ? body.input.trim() : `/${body.input.trim()}`;
+          const parsed = parseCommand(rawLine);
+          if (!parsed) {
+            sendJson(res, 400, { error: 'Invalid CLI slash command syntax.' });
+            return;
+          }
+          cmdName = parsed.name;
+          cmdArgv = parsed.argv;
+        } else if (typeof body.name === 'string' && body.name.trim()) {
+          cmdName = body.name.trim().toLowerCase();
+          cmdArgv = Array.isArray(body.argv) ? body.argv.map((x: unknown) => String(x ?? '')) : [];
+        } else {
+          sendJson(res, 400, { error: 'Command input or name is required.' });
+          return;
+        }
+        if (cmdName === 'exit' || cmdName === 'quit') {
+          sendJson(res, 200, {
+            ok: true,
+            command: cmdName,
+            title: 'Exit',
+            output: 'Press Ctrl+C in the terminal running `causyne web` to stop the local Skybridge server cleanly.'
+          });
+          return;
+        }
+        const prevCwd = process.cwd();
+        let result: Awaited<ReturnType<typeof runCommand>>;
+        try {
+          if (prevCwd !== workspaceRoot) process.chdir(workspaceRoot);
+          result = await runCommand(cmdName, cmdArgv, {
+            surface: 'terminal',
+            workspaceRoot,
+            cwd: workspaceRoot
+          });
+        } finally {
+          try { if (process.cwd() !== prevCwd) process.chdir(prevCwd); } catch { /* ignore */ }
+        }
+        auditLog.log({ event: 'skybridge_cli_command', command: cmdName, ok: Boolean(result.ok) });
+        sendJson(res, 200, {
+          ok: Boolean(result.ok),
+          command: cmdName,
+          title: typeof result.title === 'string' ? result.title : `/${cmdName}`,
+          effect: typeof result.effect === 'string' ? result.effect : null,
+          output: redactProviderSecrets(String(result.output || ''))
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/cli/overview') {
+        const checkpoints = listGroups(12).map((g) => ({
+          id: g.taskId,
+          createdAt: g.ts,
+          label: g.prompt || g.taskId,
+          fileCount: Array.isArray(g.fileEntries) ? g.fileEntries.length : 0
+        }));
+        const skills = listCompiledSkills();
+        const mcpServers = serverStatus().map((s) => ({
+          name: s.name,
+          connected: Boolean((s as any).connected),
+          granted: Boolean((s as any).granted),
+          toolsCount: typeof (s as any).toolsCount === 'number' ? (s as any).toolsCount : 0
+        }));
+        const peers = listAllPeers().map((p) => ({
+          name: p.id,
+          label: p.label,
+          command: p.command
+        }));
+        const tasks = backgroundTaskManager.list().slice(0, 20).map((t) => ({
+          id: t.taskId,
+          label: t.label,
+          command: t.command,
+          status: t.status,
+          startedAt: t.startedAt
+        }));
+        let worktrees: Array<{ path: string; branch: string; managed: boolean }> = [];
+        try {
+          worktrees = listWorktrees(workspaceRoot).map((w) => ({
+            path: w.path,
+            branch: w.branch || 'detached',
+            managed: Boolean(w.managed)
+          }));
+        } catch {
+          worktrees = [];
+        }
+        sendJson(res, 200, {
+          ok: true,
+          commandsCount: listCommands('terminal').length,
+          skillsCount: skills.length,
+          checkpoints,
+          mcpServers,
+          peers,
+          tasks,
+          worktrees,
+          browserActive: causyneBrowser({ workspace: workspaceRoot }).isActive(),
+          browserControlOwner
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/browser/state') {
+        const ensure = parsedUrl.searchParams.get('ensure') === '1';
+        const browser = causyneBrowser({ workspace: workspaceRoot });
+        const frame = await browser.captureLiveFrame({ ensureStarted: ensure });
+        sendJson(res, 200, {
+          ok: true,
+          controlOwner: browserControlOwner,
+          ...frame
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/browser/action') {
+        const body = await readJsonBody(req);
+        const action = typeof body.action === 'string' ? body.action.trim() : '';
+        const browser = causyneBrowser({ workspace: workspaceRoot });
+
+        if (action === 'takeControl') {
+          browserControlOwner = 'human';
+          const frame = await browser.captureLiveFrame({ ensureStarted: false });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if (action === 'handToAgent') {
+          browserControlOwner = 'agent';
+          const frame = await browser.captureLiveFrame({ ensureStarted: false });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if (action === 'start') {
+          browserControlOwner = 'human';
+          const frame = await browser.captureLiveFrame({ ensureStarted: true });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if (action === 'close') {
+          await browser.close();
+          const frame = await browser.captureLiveFrame({ ensureStarted: false });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if (action === 'goto' || action === 'newTab') {
+          browserControlOwner = 'human';
+          let rawUrl = typeof body.url === 'string' ? body.url.trim() : '';
+          if (rawUrl.startsWith('@')) {
+            const idx = rawUrl.indexOf(' ');
+            const macro = idx === -1 ? rawUrl : rawUrl.slice(0, idx);
+            const q = idx === -1 ? '' : rawUrl.slice(idx + 1).trim();
+            const expanded = expandSearchMacro(macro, q);
+            if (!expanded) {
+              sendJson(res, 400, { error: 'Unsupported browser search macro.' });
+              return;
+            }
+            rawUrl = expanded;
+          } else if (rawUrl && !/^https?:\/\//i.test(rawUrl)) {
+            rawUrl = rawUrl.includes('.') || rawUrl.startsWith('localhost')
+              ? `https://${rawUrl}`
+              : (expandSearchMacro('@duckduckgo_search', rawUrl) || `https://duckduckgo.com/?q=${encodeURIComponent(rawUrl)}`);
+          }
+          await browser.run(
+            [action === 'newTab' ? { type: 'newTab', ...(rawUrl ? { url: rawUrl } : {}) } : { type: 'goto', url: rawUrl || 'about:blank' }],
+            { workspace: workspaceRoot }
+          );
+          const frame = await browser.captureLiveFrame({ ensureStarted: true });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if (action === 'back' || action === 'forward' || action === 'reload') {
+          browserControlOwner = 'human';
+          await browser.run([{ type: action }], { workspace: workspaceRoot });
+          const frame = await browser.captureLiveFrame({ ensureStarted: true });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if ((action === 'switchTab' || action === 'closeTab') && typeof body.tabId === 'string' && body.tabId.trim()) {
+          browserControlOwner = 'human';
+          await browser.run([{ type: action, tabId: body.tabId.trim() }], { workspace: workspaceRoot });
+          const frame = await browser.captureLiveFrame({ ensureStarted: true });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if (action === 'viewport') {
+          const width = Math.max(320, Math.min(1920, Number(body.width) || 1280));
+          const height = Math.max(480, Math.min(1200, Number(body.height) || 800));
+          await browser.run([{ type: 'viewport', width, height }], { workspace: workspaceRoot });
+          const frame = await browser.captureLiveFrame({ ensureStarted: true });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        if (action === 'snapshot') {
+          const snap = await browser.snapshot(0);
+          const frame = await browser.captureLiveFrame({ ensureStarted: true });
+          sendJson(res, 200, {
+            ok: true,
+            controlOwner: browserControlOwner,
+            snapshot: snap.text,
+            refsCount: snap.refsCount,
+            ...frame
+          });
+          return;
+        }
+        if (action === 'click' || action === 'dblclick' || action === 'wheel' || action === 'type' || action === 'key') {
+          browserControlOwner = 'human';
+          const frame = await browser.interactAt({
+            kind: action,
+            x: typeof body.x === 'number' ? body.x : undefined,
+            y: typeof body.y === 'number' ? body.y : undefined,
+            deltaX: typeof body.deltaX === 'number' ? body.deltaX : undefined,
+            deltaY: typeof body.deltaY === 'number' ? body.deltaY : undefined,
+            text: typeof body.text === 'string' ? body.text : undefined,
+            key: typeof body.key === 'string' ? body.key : undefined
+          });
+          sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+          return;
+        }
+        sendJson(res, 400, { error: 'Unsupported shared browser action.' });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/browser/cdp/tabs') {
+        const portParam = parsedUrl.searchParams.get('port') || '9222';
+        const discovered = await discoverLocalCdpTabs(portParam);
+        sendJson(res, 200, {
+          ok: true,
+          port: discovered.port,
+          tabs: discovered.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url }))
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/browser/cdp/sync') {
+        const body = await readJsonBody(req);
+        const targetId = typeof body.targetId === 'string' ? body.targetId.trim() : '';
+        if (!targetId) {
+          sendJson(res, 400, { error: 'targetId is required to sync a local browser tab.' });
+          return;
+        }
+        const synced = await syncLocalCdpTabToCausyne({
+          workspaceRoot,
+          port: body.port ?? 9222,
+          targetId,
+          includeCookies: body.includeCookies === true
+        });
+        browserControlOwner = 'human';
+        auditLog.log({
+          event: 'skybridge_browser_cdp_sync',
+          importedCookies: synced.importedCookies
+        });
+        sendJson(res, 200, {
+          ok: true,
+          controlOwner: browserControlOwner,
+          syncedUrl: synced.syncedUrl,
+          importedCookies: synced.importedCookies,
+          ...synced.frame
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/browser/import') {
+        const body = await readJsonBody(req);
+        const rawText = typeof body.rawText === 'string' ? body.rawText : '';
+        const summary = await importExplicitUserBrowserData({
+          workspaceRoot,
+          rawText,
+          openFirstUrl: body.openFirstUrl !== false
+        });
+        const frame = await causyneBrowser({ workspace: workspaceRoot }).captureLiveFrame({ ensureStarted: false });
+        auditLog.log({
+          event: 'skybridge_browser_import',
+          importedCookies: summary.importedCookies,
+          urlsCount: summary.importedUrls.length
+        });
+        sendJson(res, 200, {
+          ok: true,
+          controlOwner: browserControlOwner,
+          ...summary,
+          ...frame
+        });
+        return;
+      }
+
       if (req.method === 'POST' && pathname === '/api/approve') {
         const body = await readJsonBody(req);
         const toolCallId = typeof body.toolCallId === 'string' ? body.toolCallId.trim() : '';
@@ -843,7 +1202,21 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
         }
 
         const sink = { readyState: 1, send: writeFrame };
-        const loop = loopFactory(sink, taskId, effectivePrompt, {
+        const wrappedSink = {
+          readyState: 1,
+          send: (raw: string) => {
+            try {
+              const parsed = JSON.parse(raw) as { type?: string; tool?: string };
+              if ((parsed.type === 'step_start' || parsed.type === 'tool_start')
+                && typeof parsed.tool === 'string'
+                && parsed.tool.toLowerCase().includes('browser')) {
+                browserControlOwner = 'agent';
+              }
+            } catch { /* ignore */ }
+            sink.send(raw);
+          }
+        };
+        const loop = loopFactory(wrappedSink, taskId, effectivePrompt, {
           workspaceRoot,
           mode,
           sessionId: boundSession?.id,

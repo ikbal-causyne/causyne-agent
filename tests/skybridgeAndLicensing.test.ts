@@ -19,6 +19,10 @@ import {
   startSkybridgeServer
 } from '../src/web/skybridgeServer.js';
 import {
+  extractExplicitBookmarkUrls,
+  parseValidatedCdpPort
+} from '../src/web/skybridgeBrowserBridge.js';
+import {
   formatByokProbeReport,
   runZeroSpendByokProbe
 } from '../src/verification/byokSmokeProbe.js';
@@ -337,6 +341,60 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.equal(diffRes.status, 200);
       assert.equal(JSON.parse(diffRes.body).ok, true);
       assert.equal(JSON.parse(diffRes.body).isGitRepo, false);
+
+      // 11. Full Causyne CLI Mirror APIs (/api/commands, /api/command, /api/cli/overview)
+      const cmdsRes = await rawHttpRequest({ port: handle.port, path: '/api/commands', headers: authHeaders });
+      assert.equal(cmdsRes.status, 200);
+      const cmdsBody = JSON.parse(cmdsRes.body);
+      assert.ok(Array.isArray(cmdsBody.commands) && cmdsBody.commands.length >= 30);
+      assert.ok(cmdsBody.commands.some((c: any) => c.name === 'doctor'));
+      assert.ok(cmdsBody.commands.some((c: any) => c.name === 'checkpoints'));
+
+      const verCmd = await rawHttpRequest({
+        port: handle.port,
+        method: 'POST',
+        path: '/api/command',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: '/version' })
+      });
+      assert.equal(verCmd.status, 200);
+      assert.equal(JSON.parse(verCmd.body).ok, true);
+
+      const exitCmd = await rawHttpRequest({
+        port: handle.port,
+        method: 'POST',
+        path: '/api/command',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: '/exit' })
+      });
+      assert.equal(exitCmd.status, 200);
+      assert.match(JSON.parse(exitCmd.body).output, /Ctrl\+C/);
+
+      const cliOverview = await rawHttpRequest({ port: handle.port, path: '/api/cli/overview', headers: authHeaders });
+      assert.equal(cliOverview.status, 200);
+      assert.ok(JSON.parse(cliOverview.body).commandsCount >= 30);
+
+      // 12. Shared Agent + Human Browser state & ownership handoff + zero-malware bridge validators
+      const bState = await rawHttpRequest({ port: handle.port, path: '/api/browser/state', headers: authHeaders });
+      assert.equal(bState.status, 200);
+      assert.equal(JSON.parse(bState.body).controlOwner, 'human');
+
+      const handToAgent = await rawHttpRequest({
+        port: handle.port,
+        method: 'POST',
+        path: '/api/browser/action',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'handToAgent' })
+      });
+      assert.equal(handToAgent.status, 200);
+      assert.equal(JSON.parse(handToAgent.body).controlOwner, 'agent');
+
+      assert.equal(parseValidatedCdpPort('9222'), 9222);
+      assert.throws(() => parseValidatedCdpPort('80'));
+      assert.deepEqual(
+        extractExplicitBookmarkUrls('<DT><A HREF="https://causyne.com/">Causyne</A><A HREF="javascript:alert(1)">Bad</A>'),
+        ['https://causyne.com/']
+      );
     } finally {
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });
