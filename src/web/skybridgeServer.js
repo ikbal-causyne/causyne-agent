@@ -25,19 +25,48 @@ import path from 'node:path';
 import { AgentLoop } from '../agentLoop.js';
 import { isPhysicalPathAllowed, physicalPath } from '../agent/workspaceBoundary.js';
 import { atomicWriteFileSync } from '../infra/atomicWriter.js';
-import { loadConfig } from '../config.js';
+import { applyProviderOverrides, loadConfig, resolveProviderApiKey, saveConfig } from '../config.js';
 import { detectZeroCostProviders } from '../zeroCostRouting.js';
+import { DEFAULT_MODEL_BY_PROVIDER, MODEL_CATALOGUE } from '../modelCatalogue.js';
+import { createSession, deleteSession, getSession, listSessions, renameSession, saveSessionMessages } from '../sessionJournal.js';
+import { collectWorkingTreeDiff } from '../diffReview.js';
 import { auditLog } from '../auditLog.js';
 import { getPackageVersion } from '../version.js';
 import { formatRedactedProviderErrorReport, redactProviderSecrets } from '../providers/byokHttp.js';
 import { isIgnoredByCausyneIgnore } from '../ignoreRules.js';
 import { renderSkybridgeHtml } from './skybridgeUi.js';
-const MAX_JSON_BODY_BYTES = 1024 * 1024; // 1 MiB
-const MAX_FILE_READ_BYTES = 512 * 1024; // 512 KiB
-const MAX_FILE_WRITE_BYTES = 2 * 1024 * 1024; // 2 MiB
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
+const MAX_FILE_READ_BYTES = 512 * 1024;
+const MAX_FILE_WRITE_BYTES = 2 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 32 * 1024;
+const MAX_ATTACHMENTS = 6;
 const MAX_LIST_ENTRIES = 250;
 const SKIPPED_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', 'build', '.venv']);
 const ALLOWED_REMOTE_ORIGINS = new Set(['https://causyne.com', 'https://www.causyne.com']);
+const SAFE_SESSION_ID_RE = /^s_[a-zA-Z0-9_-]{3,80}$/;
+const SAFE_PROVIDER_RE = /^[a-zA-Z0-9._/-]{1,64}$/;
+const SAFE_MODEL_RE = /^[a-zA-Z0-9._/:() -]{1,128}$/;
+const PROVIDER_KEY_FOR_CATALOG_LABEL = {
+    'DeepSeek': 'deepseek',
+    'Qwen': 'qwen',
+    'Anthropic': 'anthropic',
+    'OpenAI': 'openai',
+    'Gemini': 'gemini',
+    'Meta (Muse)': 'muse',
+    'Ollama (Local)': 'ollama',
+    'Alibaba (DashScope)': 'dashscope-byok',
+    'Moonshot (Kimi)': 'moonshot',
+    'xAI (Grok)': 'xai',
+    'Google Antigravity': 'antigravity',
+    'Pi (Local Peer)': 'pi',
+    'ACP (Peer Agents)': 'acp',
+    'OpenCode (ACP)': 'acp/opencode',
+    'Claude Code (ACP)': 'acp/claude',
+    'OpenRouter (Free)': 'openrouter',
+    'Groq (Free Tier)': 'groq',
+    'Cerebras (Free Tier)': 'cerebras',
+    'Mistral (Free Tier)': 'mistral'
+};
 export function isAllowedSkybridgeHost(hostHeader, port) {
     if (!hostHeader || typeof hostHeader !== 'string')
         return false;
@@ -99,7 +128,7 @@ function applySecurityHeaders(res, originHeader, originAllowed) {
     if (originHeader && originAllowed) {
         res.setHeader('Access-Control-Allow-Origin', originHeader);
         res.setHeader('Access-Control-Allow-Private-Network', 'true');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
         res.setHeader('Vary', 'Origin, Access-Control-Request-Private-Network');
     }
@@ -143,38 +172,142 @@ function resolveWorkspaceRelativePath(workspaceRoot, rawRel) {
         return null;
     return candidate;
 }
-function listWorkspaceEntries(workspaceRoot, relDir) {
+function listWorkspaceEntries(workspaceRoot, relDir, query = '') {
     const targetDir = relDir ? resolveWorkspaceRelativePath(workspaceRoot, relDir) : workspaceRoot;
     if (!targetDir)
         throw new Error('Requested directory is outside the locked workspace.');
-    const dirents = fs.readdirSync(targetDir, { withFileTypes: true });
+    const q = query.trim().toLowerCase();
     const entries = [];
-    for (const d of dirents) {
+    const scan = (dir, depth) => {
         if (entries.length >= MAX_LIST_ENTRIES)
-            break;
-        if (d.isSymbolicLink())
-            continue;
-        if (d.isDirectory() && SKIPPED_DIRS.has(d.name))
-            continue;
-        const abs = path.join(targetDir, d.name);
-        if (!isPhysicalPathAllowed(abs, [workspaceRoot], false))
-            continue;
-        if (isIgnoredByCausyneIgnore(abs, workspaceRoot, d.isDirectory()))
-            continue;
-        const rel = path.relative(workspaceRoot, abs).split(path.sep).join('/');
-        let size = 0;
-        if (d.isFile()) {
-            try {
-                size = fs.statSync(abs).size;
+            return;
+        let dirents;
+        try {
+            dirents = fs.readdirSync(dir, { withFileTypes: true });
+        }
+        catch {
+            return;
+        }
+        for (const d of dirents) {
+            if (entries.length >= MAX_LIST_ENTRIES)
+                break;
+            if (d.isSymbolicLink())
+                continue;
+            if (d.isDirectory() && SKIPPED_DIRS.has(d.name))
+                continue;
+            const abs = path.join(dir, d.name);
+            if (!isPhysicalPathAllowed(abs, [workspaceRoot], false))
+                continue;
+            if (isIgnoredByCausyneIgnore(abs, workspaceRoot, d.isDirectory()))
+                continue;
+            const rel = path.relative(workspaceRoot, abs).split(path.sep).join('/');
+            const isDir = d.isDirectory();
+            let size = 0;
+            if (!isDir) {
+                try {
+                    size = fs.statSync(abs).size;
+                }
+                catch {
+                    size = 0;
+                }
             }
-            catch {
-                size = 0;
+            if (!q || rel.toLowerCase().includes(q)) {
+                entries.push({ path: rel, name: d.name, type: isDir ? 'dir' : 'file', size });
+            }
+            if (q && isDir && depth < 3) {
+                scan(abs, depth + 1);
             }
         }
-        entries.push({ path: rel, type: d.isDirectory() ? 'dir' : 'file', size });
-    }
+    };
+    scan(targetDir, 0);
     entries.sort((a, b) => (a.type === b.type ? a.path.localeCompare(b.path) : a.type === 'dir' ? -1 : 1));
     return entries;
+}
+function extractSessionDisplayMessages(messages) {
+    const out = [];
+    for (const msg of messages) {
+        if (msg.role !== 'user' && msg.role !== 'assistant')
+            continue;
+        let text = '';
+        if (typeof msg.content === 'string') {
+            text = msg.content;
+        }
+        else if (Array.isArray(msg.content)) {
+            const parts = [];
+            for (const block of msg.content) {
+                if (block && typeof block === 'object' && typeof block.text === 'string') {
+                    parts.push(String(block.text));
+                }
+            }
+            text = parts.join('\n');
+        }
+        const trimmed = text.trim();
+        if (!trimmed)
+            continue;
+        out.push({ role: msg.role, content: trimmed });
+    }
+    return out;
+}
+function buildWorkspacePromptWithAttachments(workspaceRoot, prompt, rawAttachments) {
+    if (!Array.isArray(rawAttachments) || rawAttachments.length === 0) {
+        return { effectivePrompt: prompt, attachedPaths: [] };
+    }
+    const attachedPaths = [];
+    const sections = [];
+    for (const raw of rawAttachments.slice(0, MAX_ATTACHMENTS)) {
+        if (typeof raw !== 'string')
+            continue;
+        const abs = resolveWorkspaceRelativePath(workspaceRoot, raw);
+        if (!abs)
+            continue;
+        if (isIgnoredByCausyneIgnore(abs, workspaceRoot, false))
+            continue;
+        try {
+            const stat = fs.lstatSync(abs);
+            if (stat.isSymbolicLink() || !stat.isFile())
+                continue;
+            const buf = fs.readFileSync(abs);
+            if (buf.includes(0))
+                continue;
+            const sliced = buf.length > MAX_ATTACHMENT_BYTES ? buf.subarray(0, MAX_ATTACHMENT_BYTES) : buf;
+            const rel = path.relative(workspaceRoot, abs).split(path.sep).join('/');
+            const truncatedNote = buf.length > MAX_ATTACHMENT_BYTES ? '\n[truncated]' : '';
+            attachedPaths.push(rel);
+            sections.push(`--- Attached workspace file: ${rel} ---\n${sliced.toString('utf8')}${truncatedNote}`);
+        }
+        catch {
+            // skip unreadable attachment
+        }
+    }
+    if (sections.length === 0) {
+        return { effectivePrompt: prompt, attachedPaths: [] };
+    }
+    return {
+        effectivePrompt: `${sections.join('\n\n')}\n\n${prompt}`,
+        attachedPaths
+    };
+}
+function workspaceMatchesSession(sessionWorkspace, workspaceRoot) {
+    if (!sessionWorkspace)
+        return false;
+    const resolvedSession = physicalPath(sessionWorkspace);
+    return resolvedSession === workspaceRoot || sessionWorkspace === workspaceRoot;
+}
+function parseSessionIdRoute(pathname) {
+    const prefix = '/api/sessions/';
+    if (!pathname.startsWith(prefix))
+        return null;
+    const raw = pathname.slice(prefix.length);
+    if (!raw || raw.includes('/'))
+        return null;
+    let decoded = '';
+    try {
+        decoded = decodeURIComponent(raw);
+    }
+    catch {
+        return null;
+    }
+    return SAFE_SESSION_ID_RE.test(decoded) ? decoded : null;
 }
 export async function startSkybridgeServer(options = {}) {
     const rawRoot = options.workspaceRoot || process.cwd();
@@ -184,15 +317,24 @@ export async function startSkybridgeServer(options = {}) {
     }
     const workspaceRoot = resolvedRoot;
     const token = options.token || crypto.randomBytes(32).toString('base64url');
-    const requestedPort = typeof options.port === 'number' && Number.isInteger(options.port) && options.port >= 0 && options.port <= 65535
+    const requestedPort = typeof options.port === 'number'
+        && Number.isInteger(options.port)
+        && options.port >= 0
+        && options.port <= 65535
         ? options.port
         : 0;
     const extraOrigins = options.allowedOrigins ?? [];
     const version = getPackageVersion();
+    const hasCustomFactory = typeof options.loopFactory === 'function';
     const loopFactory = options.loopFactory ?? ((sink, taskId, prompt, opts) => {
-        const loop = new AgentLoop(sink, taskId, prompt, {
-            workspaceRoot: opts.workspaceRoot
-        });
+        const loopOptions = { workspaceRoot: opts.workspaceRoot };
+        if (opts.sessionId)
+            loopOptions.memorySessionId = opts.sessionId;
+        if (opts.provider)
+            loopOptions.provider = opts.provider;
+        if (opts.model)
+            loopOptions.model = opts.model;
+        const loop = new AgentLoop(sink, taskId, prompt, loopOptions);
         if (loop.sandbox && (opts.mode === 'A' || opts.mode === 'B' || opts.mode === 'C')) {
             loop.sandbox.autonomyMode = opts.mode;
         }
@@ -234,7 +376,9 @@ export async function startSkybridgeServer(options = {}) {
         if (req.method === 'GET' && pathname === '/') {
             const cspNonce = crypto.randomBytes(16).toString('base64url');
             res.statusCode = 200;
-            res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'`);
+            res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; `
+                + `style-src 'self' 'unsafe-inline'; img-src 'self' data:; `
+                + `connect-src 'self'; frame-ancestors 'none'`);
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
             res.end(renderSkybridgeHtml({
                 cspNonce,
@@ -262,16 +406,165 @@ export async function startSkybridgeServer(options = {}) {
                     workspaceRoot,
                     workspaceName: path.basename(workspaceRoot),
                     provider: config.provider || 'unconfigured',
-                    model: config.model || 'default',
+                    model: config.model || DEFAULT_MODEL_BY_PROVIDER[String(config.provider || '')] || 'default',
                     zeroCostReadyCount: readyZeroCost.length,
+                    zeroCostRoutes: readyZeroCost.map((z) => ({
+                        id: z.id,
+                        provider: z.provider,
+                        model: z.model,
+                        label: z.label,
+                        costTier: z.costTier
+                    })),
                     busy: activeLoop !== null
                 });
                 return;
             }
+            if (req.method === 'GET' && pathname === '/api/models') {
+                const config = loadConfig();
+                const zeroCost = await detectZeroCostProviders({ config, probeOllama: false });
+                const readySet = new Set(zeroCost.filter((z) => z.readiness === 'ready').map((z) => z.provider));
+                const groups = Object.entries(MODEL_CATALOGUE).map(([label, models]) => {
+                    const providerId = PROVIDER_KEY_FOR_CATALOG_LABEL[label] || label.toLowerCase();
+                    const hasKey = Boolean(resolveProviderApiKey(config, providerId));
+                    const isZeroCostReady = readySet.has(providerId);
+                    return {
+                        label,
+                        provider: providerId,
+                        configured: hasKey || isZeroCostReady,
+                        zeroCostReady: isZeroCostReady,
+                        defaultModel: DEFAULT_MODEL_BY_PROVIDER[providerId] || models[0] || '',
+                        models
+                    };
+                });
+                sendJson(res, 200, {
+                    ok: true,
+                    activeProvider: config.provider || 'unconfigured',
+                    activeModel: config.model || DEFAULT_MODEL_BY_PROVIDER[String(config.provider || '')] || '',
+                    zeroCost: zeroCost.map((z) => ({
+                        id: z.id,
+                        provider: z.provider,
+                        model: z.model,
+                        label: z.label,
+                        costTier: z.costTier,
+                        readiness: z.readiness
+                    })),
+                    groups
+                });
+                return;
+            }
+            if (req.method === 'POST' && pathname === '/api/model') {
+                const body = await readJsonBody(req);
+                const provider = typeof body.provider === 'string' ? body.provider.trim() : '';
+                const model = typeof body.model === 'string' ? body.model.trim() : '';
+                if (!provider || !SAFE_PROVIDER_RE.test(provider)) {
+                    sendJson(res, 400, { error: 'Valid provider identifier is required.' });
+                    return;
+                }
+                if (model && !SAFE_MODEL_RE.test(model)) {
+                    sendJson(res, 400, { error: 'Invalid model identifier.' });
+                    return;
+                }
+                const config = loadConfig();
+                const resolvedModel = model || DEFAULT_MODEL_BY_PROVIDER[provider] || '';
+                applyProviderOverrides(config, provider, resolvedModel);
+                saveConfig(config);
+                auditLog.log({
+                    event: 'skybridge_model_switch',
+                    provider: config.provider,
+                    model: config.model
+                });
+                sendJson(res, 200, {
+                    ok: true,
+                    provider: config.provider,
+                    model: config.model || DEFAULT_MODEL_BY_PROVIDER[String(config.provider || '')] || 'default'
+                });
+                return;
+            }
+            if (req.method === 'GET' && pathname === '/api/sessions') {
+                const all = listSessions();
+                const scoped = all.filter((row) => workspaceMatchesSession(row.workspace, workspaceRoot));
+                sendJson(res, 200, {
+                    ok: true,
+                    sessions: scoped.slice(0, 50).map((row) => ({
+                        id: row.id,
+                        title: row.title,
+                        createdAt: row.createdAt,
+                        updatedAt: row.updatedAt,
+                        messageCount: row.messageCount
+                    }))
+                });
+                return;
+            }
+            if (req.method === 'POST' && pathname === '/api/sessions') {
+                const body = await readJsonBody(req);
+                const rawTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 80) : '';
+                const created = createSession(workspaceRoot, rawTitle || 'Untitled', false);
+                sendJson(res, 201, {
+                    ok: true,
+                    session: {
+                        id: created.id,
+                        title: created.title,
+                        createdAt: created.createdAt,
+                        updatedAt: created.updatedAt,
+                        messageCount: 0,
+                        messages: []
+                    }
+                });
+                return;
+            }
+            const sessionIdParam = parseSessionIdRoute(pathname);
+            if (sessionIdParam) {
+                const existing = getSession(sessionIdParam);
+                if (!existing || !workspaceMatchesSession(existing.workspace, workspaceRoot)) {
+                    sendJson(res, 404, { error: 'Session not found in this workspace.' });
+                    return;
+                }
+                if (req.method === 'GET') {
+                    sendJson(res, 200, {
+                        ok: true,
+                        session: {
+                            id: existing.id,
+                            title: existing.title,
+                            createdAt: existing.createdAt,
+                            updatedAt: existing.updatedAt,
+                            messageCount: existing.messages.length,
+                            messages: extractSessionDisplayMessages(existing.messages)
+                        }
+                    });
+                    return;
+                }
+                if (req.method === 'PATCH') {
+                    const body = await readJsonBody(req);
+                    const nextTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 80) : '';
+                    if (!nextTitle) {
+                        sendJson(res, 400, { error: 'A non-empty session title is required.' });
+                        return;
+                    }
+                    const updated = renameSession(existing.id, nextTitle);
+                    if (!updated) {
+                        sendJson(res, 400, { error: 'Could not rename session.' });
+                        return;
+                    }
+                    sendJson(res, 200, { ok: true, id: existing.id, title: nextTitle });
+                    return;
+                }
+                if (req.method === 'DELETE') {
+                    const removed = deleteSession(existing.id);
+                    sendJson(res, removed ? 200 : 404, { ok: removed, id: existing.id });
+                    return;
+                }
+            }
             if (req.method === 'GET' && pathname === '/api/files') {
                 const dir = parsedUrl.searchParams.get('dir') || '';
-                const entries = listWorkspaceEntries(workspaceRoot, dir);
-                sendJson(res, 200, { ok: true, dir, entries });
+                const q = parsedUrl.searchParams.get('q') || '';
+                const entries = listWorkspaceEntries(workspaceRoot, dir, q);
+                const parentDir = dir ? path.posix.dirname(dir.replace(/\\/g, '/')) : '';
+                sendJson(res, 200, {
+                    ok: true,
+                    dir,
+                    parentDir: parentDir === '.' ? '' : parentDir,
+                    entries
+                });
                 return;
             }
             if (req.method === 'GET' && pathname === '/api/file') {
@@ -327,6 +620,42 @@ export async function startSkybridgeServer(options = {}) {
                 sendJson(res, 200, { ok: true, path: relNormalized, bytes: byteCount });
                 return;
             }
+            if (req.method === 'GET' && pathname === '/api/diff') {
+                const staged = parsedUrl.searchParams.get('staged') === '1';
+                try {
+                    const report = collectWorkingTreeDiff(workspaceRoot, { staged });
+                    sendJson(res, 200, {
+                        ok: true,
+                        isGitRepo: true,
+                        staged: report.staged,
+                        totalAdditions: report.totalAdditions,
+                        totalDeletions: report.totalDeletions,
+                        truncated: report.truncated,
+                        files: report.files.slice(0, 60).map((f) => ({
+                            path: f.displayPath,
+                            status: f.status,
+                            additions: f.additions,
+                            deletions: f.deletions,
+                            hunks: f.hunks.slice(0, 20).map((h) => ({
+                                header: h.header,
+                                lines: h.lines.slice(0, 200)
+                            }))
+                        }))
+                    });
+                }
+                catch {
+                    sendJson(res, 200, {
+                        ok: true,
+                        isGitRepo: false,
+                        staged,
+                        totalAdditions: 0,
+                        totalDeletions: 0,
+                        truncated: false,
+                        files: []
+                    });
+                }
+                return;
+            }
             if (req.method === 'GET' && pathname === '/api/doctor/report') {
                 const config = loadConfig();
                 sendJson(res, 200, {
@@ -366,22 +695,66 @@ export async function startSkybridgeServer(options = {}) {
                 const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
                 const rawMode = typeof body.mode === 'string' ? body.mode.trim().toUpperCase() : 'B';
                 const mode = rawMode === 'A' || rawMode === 'B' || rawMode === 'C' ? rawMode : 'B';
+                const requestedSessionId = typeof body.sessionId === 'string' && SAFE_SESSION_ID_RE.test(body.sessionId.trim())
+                    ? body.sessionId.trim()
+                    : '';
+                const providerOverride = typeof body.provider === 'string' && SAFE_PROVIDER_RE.test(body.provider.trim())
+                    ? body.provider.trim()
+                    : undefined;
+                const modelOverride = typeof body.model === 'string' && SAFE_MODEL_RE.test(body.model.trim())
+                    ? body.model.trim()
+                    : undefined;
                 if (!prompt) {
                     sendJson(res, 400, { error: 'Prompt text is required.' });
                     return;
                 }
+                let boundSession = requestedSessionId ? getSession(requestedSessionId) : null;
+                if (boundSession && !workspaceMatchesSession(boundSession.workspace, workspaceRoot)) {
+                    boundSession = null;
+                }
+                if (!boundSession && !hasCustomFactory) {
+                    boundSession = createSession(workspaceRoot, prompt.slice(0, 60), false);
+                }
+                const { effectivePrompt, attachedPaths } = buildWorkspacePromptWithAttachments(workspaceRoot, prompt, body.attachments);
                 res.statusCode = 200;
                 res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
                 res.setHeader('Transfer-Encoding', 'chunked');
                 const taskId = `web-${++taskCounter}-${Date.now()}`;
+                let collectedAssistantText = '';
                 const writeFrame = (raw) => {
                     if (res.writableEnded || res.destroyed)
                         return;
                     const clean = raw.replace(/\r?\n/g, ' ');
+                    try {
+                        const parsed = JSON.parse(clean);
+                        if (parsed.type === 'agent_chunk' && typeof parsed.delta === 'string') {
+                            collectedAssistantText += parsed.delta;
+                        }
+                        else if (parsed.type === 'agent_message' && typeof parsed.content === 'string' && !collectedAssistantText) {
+                            collectedAssistantText = parsed.content;
+                        }
+                    }
+                    catch {
+                        // pass raw frame through untouched
+                    }
                     res.write(`${clean}\n`);
                 };
+                if (boundSession) {
+                    writeFrame(JSON.stringify({
+                        type: 'session_bound',
+                        sessionId: boundSession.id,
+                        title: boundSession.title,
+                        attachments: attachedPaths
+                    }));
+                }
                 const sink = { readyState: 1, send: writeFrame };
-                const loop = loopFactory(sink, taskId, prompt, { workspaceRoot, mode });
+                const loop = loopFactory(sink, taskId, effectivePrompt, {
+                    workspaceRoot,
+                    mode,
+                    sessionId: boundSession?.id,
+                    provider: providerOverride,
+                    model: modelOverride
+                });
                 activeLoop = loop;
                 req.on('close', () => {
                     if (activeLoop === loop && !res.writableEnded) {
@@ -390,7 +763,22 @@ export async function startSkybridgeServer(options = {}) {
                 });
                 try {
                     await loop.run();
-                    writeFrame(JSON.stringify({ type: 'done', taskId }));
+                    if (boundSession && hasCustomFactory && collectedAssistantText.trim()) {
+                        const latest = getSession(boundSession.id);
+                        if (latest) {
+                            const nextMessages = [
+                                ...latest.messages,
+                                { role: 'user', content: prompt },
+                                { role: 'assistant', content: collectedAssistantText.trim() }
+                            ];
+                            saveSessionMessages(boundSession.id, nextMessages);
+                        }
+                    }
+                    writeFrame(JSON.stringify({
+                        type: 'done',
+                        taskId,
+                        sessionId: boundSession?.id || null
+                    }));
                 }
                 catch (err) {
                     auditLog.log({

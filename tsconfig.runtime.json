@@ -374,6 +374,8 @@
     "src/verification/cliProbe.ts",
     "src/verification/uiRuntime.ts",
     "src/verification/byokSmokeProbe.ts",
+    "src/web/skybridgeStyles.ts",
+    "src/web/skybridgeClientScript.ts",
     "src/web/skybridgeUi.ts",
     "src/web/skybridgeServer.ts",
     "src/tools/toolPathSafety.ts",

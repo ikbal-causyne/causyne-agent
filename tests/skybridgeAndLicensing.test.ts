@@ -283,6 +283,60 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       const frames = chatRes.body.trim().split('\n').map((l) => JSON.parse(l));
       assert.ok(frames.some((f) => f.type === 'agent_chunk' && String(f.delta).includes('[APPROVED]')));
       assert.ok(frames.some((f) => f.type === 'done'));
+
+      // 9. Session lifecycle APIs (create, list, read, rename, delete) locked to workspace
+      const createSess = await rawHttpRequest({
+        port: handle.port,
+        method: 'POST',
+        path: '/api/sessions',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Web GUI Session' })
+      });
+      assert.equal(createSess.status, 201);
+      const createdId = JSON.parse(createSess.body).session.id;
+      assert.match(createdId, /^s_/);
+
+      const listSess = await rawHttpRequest({ port: handle.port, path: '/api/sessions', headers: authHeaders });
+      assert.equal(listSess.status, 200);
+      assert.ok(JSON.parse(listSess.body).sessions.some((s: any) => s.id === createdId));
+
+      const renameSess = await rawHttpRequest({
+        port: handle.port,
+        method: 'PATCH',
+        path: `/api/sessions/${encodeURIComponent(createdId)}`,
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Renamed Web Session' })
+      });
+      assert.equal(renameSess.status, 200);
+
+      const readSess = await rawHttpRequest({
+        port: handle.port,
+        path: `/api/sessions/${encodeURIComponent(createdId)}`,
+        headers: authHeaders
+      });
+      assert.equal(readSess.status, 200);
+      assert.equal(JSON.parse(readSess.body).session.title, 'Renamed Web Session');
+
+      const delSess = await rawHttpRequest({
+        port: handle.port,
+        method: 'DELETE',
+        path: `/api/sessions/${encodeURIComponent(createdId)}`,
+        headers: authHeaders
+      });
+      assert.equal(delSess.status, 200);
+
+      // 10. Models & Diff APIs (never leaks API keys, handles non-git workspaces cleanly)
+      const modelsRes = await rawHttpRequest({ port: handle.port, path: '/api/models', headers: authHeaders });
+      assert.equal(modelsRes.status, 200);
+      const modelsBody = JSON.parse(modelsRes.body);
+      assert.equal(modelsBody.ok, true);
+      assert.ok(Array.isArray(modelsBody.groups) && modelsBody.groups.length > 0);
+      assert.equal(modelsRes.body.includes('apiKey'), false);
+
+      const diffRes = await rawHttpRequest({ port: handle.port, path: '/api/diff', headers: authHeaders });
+      assert.equal(diffRes.status, 200);
+      assert.equal(JSON.parse(diffRes.body).ok, true);
+      assert.equal(JSON.parse(diffRes.body).isGitRepo, false);
     } finally {
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });
