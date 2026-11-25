@@ -26,6 +26,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 import { AgentLoop } from '../agentLoop.js';
+import { createApprovalScope } from '../approvalGrants.js';
 import { isPhysicalPathAllowed, physicalPath } from '../agent/workspaceBoundary.js';
 import { atomicWriteFileSync } from '../infra/atomicWriter.js';
 import {
@@ -90,6 +91,7 @@ export interface SkybridgeLoopLike {
   run(): Promise<void>;
   abort?(): void;
   resolveApproval?(toolCallId: string, approved: boolean): void;
+  grantAlways?(toolName: string): void;
 }
 
 export type SkybridgeLoopFactory = (
@@ -376,13 +378,15 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
   const extraOrigins = options.allowedOrigins ?? [];
   const version = getPackageVersion();
   const hasCustomFactory = typeof options.loopFactory === 'function';
+  const serverApprovalScope = createApprovalScope();
   const loopFactory: SkybridgeLoopFactory = options.loopFactory ?? ((sink, taskId, prompt, opts) => {
     const loopOptions: {
       workspaceRoot: string;
       memorySessionId?: string | null;
       provider?: string;
       model?: string;
-    } = { workspaceRoot: opts.workspaceRoot };
+      approvalScope?: ReturnType<typeof createApprovalScope>;
+    } = { workspaceRoot: opts.workspaceRoot, approvalScope: serverApprovalScope };
     if (opts.sessionId) loopOptions.memorySessionId = opts.sessionId;
     if (opts.provider) loopOptions.provider = opts.provider;
     if (opts.model) loopOptions.model = opts.model;
@@ -396,6 +400,9 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
       resolveApproval: (toolCallId: string, approved: boolean) => {
         const resolver = loop.pendingApprovals.get(toolCallId);
         if (resolver) resolver(approved);
+      },
+      grantAlways: (toolName: string) => {
+        serverApprovalScope.grantAlways(toolName);
       }
     };
   });
@@ -438,6 +445,7 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
         'Content-Security-Policy',
         `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; `
         + `style-src 'self' 'unsafe-inline'; img-src 'self' data:; `
+        + `frame-src http://127.0.0.1:* http://localhost:*; `
         + `connect-src 'self'; frame-ancestors 'none'`
       );
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -746,12 +754,18 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
         const body = await readJsonBody(req);
         const toolCallId = typeof body.toolCallId === 'string' ? body.toolCallId.trim() : '';
         const approved = body.approved === true;
+        const remember = body.remember === true;
+        const toolName = typeof body.tool === 'string' ? body.tool.trim().slice(0, 80) : '';
         if (!toolCallId || !activeLoop?.resolveApproval) {
           sendJson(res, 400, { error: 'No active pending approval matches that toolCallId.' });
           return;
         }
+        if (approved && remember && toolName && activeLoop.grantAlways) {
+          activeLoop.grantAlways(toolName);
+          auditLog.log({ event: 'skybridge_approval_grant_always', tool: toolName });
+        }
         activeLoop.resolveApproval(toolCallId, approved);
-        sendJson(res, 200, { ok: true, toolCallId, approved });
+        sendJson(res, 200, { ok: true, toolCallId, approved, remembered: Boolean(approved && remember && toolName) });
         return;
       }
 

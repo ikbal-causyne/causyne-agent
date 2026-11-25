@@ -23,6 +23,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { AgentLoop } from '../agentLoop.js';
+import { createApprovalScope } from '../approvalGrants.js';
 import { isPhysicalPathAllowed, physicalPath } from '../agent/workspaceBoundary.js';
 import { atomicWriteFileSync } from '../infra/atomicWriter.js';
 import { applyProviderOverrides, loadConfig, resolveProviderApiKey, saveConfig } from '../config.js';
@@ -326,8 +327,9 @@ export async function startSkybridgeServer(options = {}) {
     const extraOrigins = options.allowedOrigins ?? [];
     const version = getPackageVersion();
     const hasCustomFactory = typeof options.loopFactory === 'function';
+    const serverApprovalScope = createApprovalScope();
     const loopFactory = options.loopFactory ?? ((sink, taskId, prompt, opts) => {
-        const loopOptions = { workspaceRoot: opts.workspaceRoot };
+        const loopOptions = { workspaceRoot: opts.workspaceRoot, approvalScope: serverApprovalScope };
         if (opts.sessionId)
             loopOptions.memorySessionId = opts.sessionId;
         if (opts.provider)
@@ -345,6 +347,9 @@ export async function startSkybridgeServer(options = {}) {
                 const resolver = loop.pendingApprovals.get(toolCallId);
                 if (resolver)
                     resolver(approved);
+            },
+            grantAlways: (toolName) => {
+                serverApprovalScope.grantAlways(toolName);
             }
         };
     });
@@ -378,6 +383,7 @@ export async function startSkybridgeServer(options = {}) {
             res.statusCode = 200;
             res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; `
                 + `style-src 'self' 'unsafe-inline'; img-src 'self' data:; `
+                + `frame-src http://127.0.0.1:* http://localhost:*; `
                 + `connect-src 'self'; frame-ancestors 'none'`);
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
             res.end(renderSkybridgeHtml({
@@ -672,12 +678,18 @@ export async function startSkybridgeServer(options = {}) {
                 const body = await readJsonBody(req);
                 const toolCallId = typeof body.toolCallId === 'string' ? body.toolCallId.trim() : '';
                 const approved = body.approved === true;
+                const remember = body.remember === true;
+                const toolName = typeof body.tool === 'string' ? body.tool.trim().slice(0, 80) : '';
                 if (!toolCallId || !activeLoop?.resolveApproval) {
                     sendJson(res, 400, { error: 'No active pending approval matches that toolCallId.' });
                     return;
                 }
+                if (approved && remember && toolName && activeLoop.grantAlways) {
+                    activeLoop.grantAlways(toolName);
+                    auditLog.log({ event: 'skybridge_approval_grant_always', tool: toolName });
+                }
                 activeLoop.resolveApproval(toolCallId, approved);
-                sendJson(res, 200, { ok: true, toolCallId, approved });
+                sendJson(res, 200, { ok: true, toolCallId, approved, remembered: Boolean(approved && remember && toolName) });
                 return;
             }
             if (req.method === 'POST' && pathname === '/api/stop') {
