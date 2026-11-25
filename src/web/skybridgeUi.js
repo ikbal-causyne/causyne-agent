@@ -289,7 +289,7 @@ export function renderSkybridgeHtml(options) {
         '  </aside>',
         '</div>',
         '',
-        '<div id="model-popover" class="popover" role="menu" aria-label="Select model"></div>',
+        '<div id="model-popover" class="popover model-popover" role="dialog" aria-label="Select model"></div>',
         '<div id="browser-more-popover" class="popover" role="menu" aria-label="Browser options">',
         '  <div class="pop-section">Mode</div>',
         '  <button id="bmode-agent-btn" class="pop-item active" type="button"><span>Live browser</span><span class="pop-sub">Shared</span></button>',

@@ -38,6 +38,12 @@ import {
 import { detectZeroCostProviders } from '../zeroCostRouting.js';
 import { DEFAULT_MODEL_BY_PROVIDER, MODEL_CATALOGUE } from '../modelCatalogue.js';
 import {
+  getAvailableProvidersOverview,
+  resolveAvailableProvidersOverview
+} from '../dynamicCatalogue.js';
+import { buildModelPickerItems } from '../tui/modelPicker.js';
+import { disconnectOpenRouter } from '../auth/openrouterAuth.js';
+import {
   createSession,
   deleteSession,
   getSession,
@@ -88,7 +94,7 @@ const SKIPPED_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', 'build', 
 const ALLOWED_REMOTE_ORIGINS = new Set(['https://causyne.com', 'https://www.causyne.com']);
 const SAFE_SESSION_ID_RE = /^s_[a-zA-Z0-9_-]{3,80}$/;
 const SAFE_PROVIDER_RE = /^[a-zA-Z0-9._/-]{1,64}$/;
-const SAFE_MODEL_RE = /^[a-zA-Z0-9._/:() -]{1,128}$/;
+const SAFE_MODEL_RE = /^[a-zA-Z0-9._/:()+ -]{1,128}$/;
 
 const PROVIDER_KEY_FOR_CATALOG_LABEL: Record<string, string> = {
   'DeepSeek': 'deepseek',
@@ -550,6 +556,26 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
 
       if (req.method === 'GET' && pathname === '/api/models') {
         const config = loadConfig();
+        const forceRefresh = parsedUrl.searchParams.get('refresh') === '1';
+        const allowLive = forceRefresh || parsedUrl.searchParams.get('live') === '1';
+        const overview = allowLive
+          ? await resolveAvailableProvidersOverview(config, { forceRefresh })
+          : getAvailableProvidersOverview(config);
+        const activeProviderRaw = String(config.provider || '').toLowerCase().trim();
+        const initialTab: 'acp' | 'byok' | 'free' = activeProviderRaw === 'openrouter'
+          ? 'free'
+          : (activeProviderRaw === 'antigravity'
+            || activeProviderRaw === 'agy'
+            || activeProviderRaw === 'pi'
+            || activeProviderRaw === 'acp'
+            || activeProviderRaw.startsWith('acp/')
+            ? 'acp'
+            : 'byok');
+        const tabs = {
+          acp: buildModelPickerItems(config, overview, { tab: 'acp', maxAcpPerPeer: Infinity }),
+          byok: buildModelPickerItems(config, overview, { tab: 'byok', maxAcpPerPeer: Infinity }),
+          free: buildModelPickerItems(config, overview, { tab: 'free', maxAcpPerPeer: Infinity })
+        };
         const zeroCost = await detectZeroCostProviders({ config, probeOllama: false });
         const readySet = new Set(zeroCost.filter((z) => z.readiness === 'ready').map((z) => z.provider));
         const groups = Object.entries(MODEL_CATALOGUE).map(([label, models]) => {
@@ -569,6 +595,9 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
           ok: true,
           activeProvider: config.provider || 'unconfigured',
           activeModel: config.model || DEFAULT_MODEL_BY_PROVIDER[String(config.provider || '')] || '',
+          initialTab,
+          tabs,
+          overview,
           zeroCost: zeroCost.map((z) => ({
             id: z.id,
             provider: z.provider,
@@ -584,8 +613,21 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
 
       if (req.method === 'POST' && pathname === '/api/model') {
         const body = await readJsonBody(req);
+        const action = typeof body.action === 'string' ? body.action.trim() : '';
         const provider = typeof body.provider === 'string' ? body.provider.trim() : '';
         const model = typeof body.model === 'string' ? body.model.trim() : '';
+        if (action === 'disconnect' && provider === 'openrouter') {
+          disconnectOpenRouter();
+          const updated = loadConfig();
+          auditLog.log({ event: 'skybridge_openrouter_disconnect' });
+          sendJson(res, 200, {
+            ok: true,
+            disconnected: true,
+            provider: updated.provider || 'unconfigured',
+            model: updated.model || DEFAULT_MODEL_BY_PROVIDER[String(updated.provider || '')] || 'default'
+          });
+          return;
+        }
         if (!provider || !SAFE_PROVIDER_RE.test(provider)) {
           sendJson(res, 400, { error: 'Valid provider identifier is required.' });
           return;

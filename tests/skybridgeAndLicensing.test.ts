@@ -554,6 +554,18 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       const htmlSource = await htmlCheck.text();
       assert.match(htmlSource, /addNativeStep/);
       assert.match(htmlSource, /ev\.nativeStep === true/);
+      assert.match(htmlSource, /ensureModelPickerShell/);
+
+      // /api/models mirrors CLI live model chooser (ACP / BYOK / FREE tri-tab structure)
+      const cliModelsRes = await fetch(`${handle.origin}/api/models`, { headers: authHeaders });
+      assert.equal(cliModelsRes.status, 200);
+      const cliModelsBody = await cliModelsRes.json() as any;
+      assert.ok(['acp', 'byok', 'free'].includes(cliModelsBody.initialTab));
+      assert.ok(Array.isArray(cliModelsBody.tabs?.acp));
+      assert.ok(Array.isArray(cliModelsBody.tabs?.byok));
+      assert.ok(Array.isArray(cliModelsBody.tabs?.free));
+      assert.ok(cliModelsBody.tabs.byok.some((it: any) => typeof it.category === 'string' && it.category.startsWith('BYOK · ')));
+      assert.ok(cliModelsBody.tabs.free.some((it: any) => it.label === 'openrouter/free'));
     } finally {
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });
