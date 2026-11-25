@@ -1,5 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -705,6 +706,202 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.ok(!formatted.includes(secretGroqKey), 'probe report must redact failed API key');
     } finally {
       globalThis.fetch = origFetch;
+    }
+  });
+
+  test('Skybridge supports detached background runs, stream rejoin, decision resolution, targeted stop, and committed session git diffs', async () => {
+    const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-skybridge-resumable-'));
+    // Initialize a real git repo with a committed file modification to verify last-commit diff fallback.
+    execFileSync('git', ['init', '-q'], { cwd: tmpWs, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'test@causyne.local'], { cwd: tmpWs, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.name', 'Causyne Test'], { cwd: tmpWs, stdio: 'ignore' });
+    fs.writeFileSync(path.join(tmpWs, 'demo.ts'), 'export const value = 1;\n', 'utf8');
+    execFileSync('git', ['add', 'demo.ts'], { cwd: tmpWs, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: tmpWs, stdio: 'ignore' });
+    fs.writeFileSync(path.join(tmpWs, 'demo.ts'), 'export const value = 42;\nexport const extra = true;\n', 'utf8');
+    execFileSync('git', ['add', 'demo.ts'], { cwd: tmpWs, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-q', '-m', 'update'], { cwd: tmpWs, stdio: 'ignore' });
+
+    const releaseBySession = new Map<string, () => void>();
+    const decisionsReceived: Array<{ sessionId: string; requestId: string; label: string }> = [];
+    let abortedSessions: string[] = [];
+
+    const handle = await startSkybridgeServer({
+      workspaceRoot: tmpWs,
+      port: 0,
+      loopFactory: (sink, _taskId, prompt, opts) => {
+        const sid = opts.sessionId || 'ephemeral';
+        let aborted = false;
+        let decisionResolve: ((ans: { optionId: string | null; label: string; custom: boolean } | null) => void) | null = null;
+        return {
+          run: async () => {
+            sink.send(JSON.stringify({ type: 'agent_chunk', delta: `Start(${prompt}): ` }));
+            if (prompt.includes('DECIDE')) {
+              sink.send(JSON.stringify({
+                type: 'decision_request',
+                request: {
+                  id: 'dec-1',
+                  question: 'Choose layout?',
+                  options: [{ id: 'dark', label: 'Dark mode' }]
+                }
+              }));
+              const ans = await new Promise<{ optionId: string | null; label: string; custom: boolean } | null>((resolve) => {
+                decisionResolve = resolve;
+              });
+              if (ans) {
+                decisionsReceived.push({ sessionId: sid, requestId: 'dec-1', label: ans.label });
+                sink.send(JSON.stringify({ type: 'agent_chunk', delta: `Chosen=${ans.label}` }));
+              }
+              return;
+            }
+            await new Promise<void>((resolve) => {
+              releaseBySession.set(sid, resolve);
+            });
+            if (!aborted) {
+              sink.send(JSON.stringify({ type: 'agent_chunk', delta: 'Finished!' }));
+            }
+          },
+          abort: () => {
+            aborted = true;
+            abortedSessions.push(sid);
+            decisionResolve?.(null);
+            releaseBySession.get(sid)?.();
+          },
+          resolveDecision: (_reqId, answer) => {
+            decisionResolve?.(answer);
+          }
+        };
+      }
+    });
+
+    const authHeaders = { Authorization: `Bearer ${handle.token}` };
+    try {
+      const s1Res = await fetch(`${handle.origin}/api/sessions`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Detached Run Session' })
+      });
+      const s1 = ((await s1Res.json()) as any).session;
+
+      const s2Res = await fetch(`${handle.origin}/api/sessions`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Decision & Stop Session' })
+      });
+      const s2 = ((await s2Res.json()) as any).session;
+
+      // 1. Start a run on s1 and immediately abort the HTTP subscriber (simulating switching chats).
+      const detachCtrl = new AbortController();
+      const chatRes = await fetch(`${handle.origin}/api/chat`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: 'BG_TASK', sessionId: s1.id }),
+        signal: detachCtrl.signal
+      });
+      assert.equal(chatRes.status, 200);
+      const firstReader = chatRes.body!.getReader();
+      const firstChunk = await firstReader.read();
+      assert.ok(!firstChunk.done);
+      detachCtrl.abort();
+      await new Promise((r) => setTimeout(r, 60));
+
+      // Verify s1 is STILL running in the background and NOT aborted!
+      assert.equal(abortedSessions.length, 0);
+      const listRes = await fetch(`${handle.origin}/api/sessions`, { headers: authHeaders });
+      const listData = await listRes.json() as any;
+      const s1Row = (listData.sessions || []).find((x: any) => x.id === s1.id);
+      assert.equal(s1Row?.running, true);
+
+      // Re-attach via GET /api/sessions/:id/stream -> replays buffered frames and completes cleanly!
+      const rejoinPromise = fetch(`${handle.origin}/api/sessions/${encodeURIComponent(s1.id)}/stream`, {
+        headers: authHeaders
+      }).then((r) => r.text());
+      await new Promise((r) => setTimeout(r, 40));
+      releaseBySession.get(s1.id)?.();
+      const rejoinBody = await rejoinPromise;
+      assert.match(rejoinBody, /"type":"session_bound"/);
+      assert.match(rejoinBody, /Start\(BG_TASK\): /);
+      assert.match(rejoinBody, /Finished!/);
+      assert.match(rejoinBody, /"type":"done"/);
+
+      // Idle stream after completion returns clean idle event.
+      const idleBody = await fetch(`${handle.origin}/api/sessions/${encodeURIComponent(s1.id)}/stream`, {
+        headers: authHeaders
+      }).then((r) => r.text());
+      assert.match(idleBody, /"type":"idle"/);
+
+      // 2. Interactive decision_request + POST /api/decision resolution.
+      const decStreamPromise = fetch(`${handle.origin}/api/chat`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: 'DECIDE', sessionId: s2.id })
+      }).then((r) => r.text());
+      await new Promise((r) => setTimeout(r, 60));
+      const detailMid = await fetch(`${handle.origin}/api/sessions/${encodeURIComponent(s2.id)}`, {
+        headers: authHeaders
+      }).then((r) => r.json()) as any;
+      assert.equal(detailMid.session?.awaitingClient, true);
+
+      const decPost = await fetch(`${handle.origin}/api/decision`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: s2.id, requestId: 'dec-1', optionId: 'dark', label: 'Dark mode', custom: false })
+      });
+      assert.equal(decPost.status, 200);
+      const decBody = await decStreamPromise;
+      assert.match(decBody, /Chosen=Dark mode/);
+      assert.equal(decisionsReceived.length, 1);
+      assert.equal(decisionsReceived[0]?.label, 'Dark mode');
+
+      // 3. Explicit POST /api/stop targeting only s2 leaves s1 running untouched.
+      const s1RunPromise = fetch(`${handle.origin}/api/chat`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: 'KEEP_ALIVE', sessionId: s1.id })
+      }).then((r) => r.text());
+      const s2StopPromise = fetch(`${handle.origin}/api/chat`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: 'STOP_ME', sessionId: s2.id })
+      }).then((r) => r.text());
+      await new Promise((r) => setTimeout(r, 60));
+
+      const stopRes = await fetch(`${handle.origin}/api/stop`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: s2.id })
+      });
+      assert.equal(stopRes.status, 200);
+      const s2StoppedText = await s2StopPromise;
+      assert.match(s2StoppedText, /"type":"stopped"/);
+      assert.match(s2StoppedText, /"userStopped":true/);
+      assert.deepEqual(abortedSessions, [s2.id]);
+
+      releaseBySession.get(s1.id)?.();
+      const s1DoneText = await s1RunPromise;
+      assert.match(s1DoneText, /"type":"done"/);
+
+      // 4. Committed tracked file referenced by session still yields real color-coded git diff hunks.
+      const touchRes = await fetch(`${handle.origin}/api/file`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'demo.ts', content: 'export const value = 42;\nexport const extra = true;\n', sessionId: s1.id })
+      });
+      assert.equal(touchRes.status, 200);
+      const diffRes = await fetch(`${handle.origin}/api/diff?scope=session&sessionId=${encodeURIComponent(s1.id)}`, {
+        headers: authHeaders
+      });
+      assert.equal(diffRes.status, 200);
+      const diffJson = await diffRes.json() as any;
+      const demoFile = (diffJson.files || []).find((f: any) => f.path === 'demo.ts');
+      assert.ok(demoFile, 'demo.ts should be present in session diff');
+      assert.ok(Array.isArray(demoFile.hunks) && demoFile.hunks.length > 0, 'committed session file should include last-commit unified diff hunks');
+      assert.equal(demoFile.additions, 2);
+      assert.equal(demoFile.deletions, 1);
+      assert.equal(demoFile.status, 'modified');
+    } finally {
+      await handle.close();
+      fs.rmSync(tmpWs, { recursive: true, force: true });
     }
   });
 });

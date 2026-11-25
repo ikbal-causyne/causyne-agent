@@ -22,6 +22,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { AgentLoop } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
 import { isPhysicalPathAllowed, physicalPath } from '../agent/workspaceBoundary.js';
@@ -33,7 +34,7 @@ import { getAvailableProvidersOverview, resolveAvailableProvidersOverview } from
 import { buildModelPickerItems } from '../tui/modelPicker.js';
 import { disconnectOpenRouter } from '../auth/openrouterAuth.js';
 import { createSession, deleteSession, getSession, listSessions, renameSession, saveSessionMessages } from '../sessionJournal.js';
-import { collectWorkingTreeDiff } from '../diffReview.js';
+import { collectWorkingTreeDiff, parseUnifiedDiff } from '../diffReview.js';
 import { auditLog } from '../auditLog.js';
 import { getPackageVersion } from '../version.js';
 import { formatRedactedProviderErrorReport, redactProviderSecrets } from '../providers/byokHttp.js';
@@ -876,6 +877,57 @@ function parseSessionIdRoute(pathname) {
     }
     return SAFE_SESSION_ID_RE.test(decoded) ? decoded : null;
 }
+function parseSessionStreamRoute(pathname) {
+    const prefix = '/api/sessions/';
+    const suffix = '/stream';
+    if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix))
+        return null;
+    const raw = pathname.slice(prefix.length, pathname.length - suffix.length);
+    if (!raw || raw.includes('/'))
+        return null;
+    let decoded = '';
+    try {
+        decoded = decodeURIComponent(raw);
+    }
+    catch {
+        return null;
+    }
+    return SAFE_SESSION_ID_RE.test(decoded) ? decoded : null;
+}
+const MAX_RUN_BUFFERED_FRAMES = 2400;
+const MAX_RUN_BUFFERED_BYTES = 2 * 1024 * 1024;
+const STREAM_HEARTBEAT_MS = 15_000;
+function readLastGitCommitDiffForFile(workspaceRoot, relPath) {
+    if (!relPath || relPath.startsWith('-') || relPath.includes('\0'))
+        return null;
+    try {
+        const raw = execFileSync('git', ['log', '-n', '1', '--format=', '--unified=3', '--no-color', '-p', '--', relPath], {
+            cwd: workspaceRoot,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            maxBuffer: 256 * 1024,
+            timeout: 3000,
+            windowsHide: true
+        });
+        if (!raw || !raw.trim())
+            return null;
+        const parsed = parseUnifiedDiff(raw);
+        const first = parsed[0];
+        if (!first || first.hunks.length === 0)
+            return null;
+        return {
+            additions: first.additions,
+            deletions: first.deletions,
+            hunks: first.hunks.slice(0, 12).map((h) => ({
+                header: h.header,
+                lines: h.lines.slice(0, 140)
+            }))
+        };
+    }
+    catch {
+        return null;
+    }
+}
 export async function startSkybridgeServer(options = {}) {
     const rawRoot = options.workspaceRoot || process.cwd();
     const resolvedRoot = physicalPath(rawRoot);
@@ -918,24 +970,134 @@ export async function startSkybridgeServer(options = {}) {
         if (opts.model)
             loopOptions.model = opts.model;
         const loop = new AgentLoop(sink, taskId, prompt, loopOptions);
-        if (loop.sandbox && (opts.mode === 'A' || opts.mode === 'B' || opts.mode === 'C')) {
-            loop.sandbox.autonomyMode = opts.mode;
+        if (opts.mode === 'A' || opts.mode === 'B' || opts.mode === 'C') {
+            try {
+                loop.setAutonomyMode(opts.mode);
+            }
+            catch {
+                // Fallback when custom mode normalization differs.
+            }
+            if (loop.sandbox) {
+                loop.sandbox.autonomyMode = opts.mode;
+            }
         }
+        const pendingDecisions = new Map();
+        loop.waitForDecision = (request) => {
+            const reqId = typeof request?.id === 'string' && request.id ? request.id : `dec_${Date.now()}`;
+            return new Promise((resolve) => {
+                pendingDecisions.set(reqId, resolve);
+            });
+        };
         return {
             run: () => loop.run(),
-            abort: () => loop.abort(),
+            abort: () => {
+                for (const [, resolve] of pendingDecisions) {
+                    try {
+                        resolve(null);
+                    }
+                    catch { /* ignore */ }
+                }
+                pendingDecisions.clear();
+                loop.abort();
+            },
             resolveApproval: (toolCallId, approved) => {
                 const resolver = loop.pendingApprovals.get(toolCallId);
                 if (resolver)
                     resolver(approved);
+            },
+            resolveDecision: (requestId, answer) => {
+                const resolver = pendingDecisions.get(requestId);
+                if (resolver) {
+                    pendingDecisions.delete(requestId);
+                    resolver(answer);
+                }
             },
             grantAlways: (toolName) => {
                 serverApprovalScope.grantAlways(toolName);
             }
         };
     });
-    let activeLoop = null;
+    const activeRuns = new Map();
     let taskCounter = 0;
+    const findActiveRun = (sessionId) => {
+        if (sessionId && activeRuns.has(sessionId)) {
+            return activeRuns.get(sessionId) ?? null;
+        }
+        if (!sessionId && activeRuns.size === 1) {
+            return activeRuns.values().next().value ?? null;
+        }
+        return null;
+    };
+    const pushRunFrame = (run, raw) => {
+        const clean = raw.replace(/\r?\n/g, ' ');
+        const frameBytes = Buffer.byteLength(clean, 'utf8');
+        if (run.frames.length < MAX_RUN_BUFFERED_FRAMES && run.bufferedBytes + frameBytes <= MAX_RUN_BUFFERED_BYTES) {
+            run.frames.push(clean);
+            run.bufferedBytes += frameBytes;
+        }
+        for (const send of run.subscribers) {
+            try {
+                send(clean);
+            }
+            catch {
+                // Isolate subscriber write failures so detached runs continue uninterrupted.
+            }
+        }
+    };
+    const attachRunStream = (req, res, run, replayBuffered) => {
+        req.setTimeout(0);
+        res.setTimeout(0);
+        try {
+            req.socket?.setKeepAlive(true, STREAM_HEARTBEAT_MS);
+        }
+        catch { /* ignore */ }
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+        res.setHeader('Transfer-Encoding', 'chunked');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders?.();
+        const writeLine = (cleanFrame) => {
+            if (res.writableEnded || res.destroyed)
+                return;
+            res.write(`${cleanFrame}\n`);
+        };
+        const heartbeatTimer = setInterval(() => {
+            if (res.writableEnded || res.destroyed)
+                return;
+            writeLine(JSON.stringify({ type: 'heartbeat', ts: Date.now() }));
+        }, STREAM_HEARTBEAT_MS);
+        heartbeatTimer.unref?.();
+        let detached = false;
+        const detach = () => {
+            if (detached)
+                return;
+            detached = true;
+            clearInterval(heartbeatTimer);
+            run.subscribers.delete(writeLine);
+            run.doneSubscribers.delete(finishResponse);
+        };
+        const finishResponse = () => {
+            detach();
+            if (!res.writableEnded && !res.destroyed)
+                res.end();
+        };
+        // Disconnecting a browser tab or switching chats ONLY unsubscribes this HTTP response.
+        // It NEVER aborts the detached AgentLoop; only explicit POST /api/stop cancels it.
+        res.on('close', detach);
+        if (replayBuffered) {
+            for (const frame of run.frames) {
+                writeLine(frame);
+            }
+        }
+        if (run.status === 'running' || run.status === 'awaiting_client') {
+            run.subscribers.add(writeLine);
+            run.doneSubscribers.add(finishResponse);
+        }
+        else {
+            finishResponse();
+        }
+    };
     const sessionTouchedFilesMap = new Map();
     const recordSessionTouchedFile = (sessionId, rawPath) => {
         if (!sessionId || !SAFE_SESSION_ID_RE.test(sessionId))
@@ -1038,7 +1200,7 @@ export async function startSkybridgeServer(options = {}) {
                         label: z.label,
                         costTier: z.costTier
                     })),
-                    busy: activeLoop !== null
+                    busy: activeRuns.size > 0
                 });
                 return;
             }
@@ -1144,14 +1306,33 @@ export async function startSkybridgeServer(options = {}) {
                 const scoped = all.filter((row) => workspaceMatchesSession(row.workspace, workspaceRoot));
                 sendJson(res, 200, {
                     ok: true,
-                    sessions: scoped.slice(0, 50).map((row) => ({
-                        id: row.id,
-                        title: row.title,
-                        createdAt: row.createdAt,
-                        updatedAt: row.updatedAt,
-                        messageCount: row.messageCount
-                    }))
+                    sessions: scoped.slice(0, 50).map((row) => {
+                        const run = activeRuns.get(row.id);
+                        const isRunning = Boolean(run && (run.status === 'running' || run.status === 'awaiting_client'));
+                        return {
+                            id: row.id,
+                            title: row.title,
+                            createdAt: row.createdAt,
+                            updatedAt: row.updatedAt,
+                            messageCount: row.messageCount,
+                            running: isRunning,
+                            awaitingClient: Boolean(run && run.status === 'awaiting_client')
+                        };
+                    })
                 });
+                return;
+            }
+            const sessionStreamId = parseSessionStreamRoute(pathname);
+            if (req.method === 'GET' && sessionStreamId) {
+                const run = activeRuns.get(sessionStreamId);
+                if (!run || (run.status !== 'running' && run.status !== 'awaiting_client')) {
+                    res.statusCode = 200;
+                    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+                    res.setHeader('Cache-Control', 'no-store');
+                    res.end(`${JSON.stringify({ type: 'idle', sessionId: sessionStreamId })}\n`);
+                    return;
+                }
+                attachRunStream(req, res, run, true);
                 return;
             }
             if (req.method === 'POST' && pathname === '/api/sessions') {
@@ -1182,6 +1363,8 @@ export async function startSkybridgeServer(options = {}) {
                     const persistedTouched = extractSessionTouchedFiles(existing.messages, workspaceRoot);
                     const liveTouched = [...(sessionTouchedFilesMap.get(existing.id) ?? [])];
                     const touchedFiles = [...new Set([...persistedTouched, ...liveTouched])].sort();
+                    const activeRun = activeRuns.get(existing.id);
+                    const isRunning = Boolean(activeRun && (activeRun.status === 'running' || activeRun.status === 'awaiting_client'));
                     sendJson(res, 200, {
                         ok: true,
                         session: {
@@ -1191,7 +1374,15 @@ export async function startSkybridgeServer(options = {}) {
                             updatedAt: existing.updatedAt,
                             messageCount: existing.messages.length,
                             messages: extractSessionDisplayMessages(existing.messages),
-                            touchedFiles
+                            touchedFiles,
+                            running: isRunning,
+                            awaitingClient: Boolean(activeRun && activeRun.status === 'awaiting_client'),
+                            activeRun: isRunning && activeRun ? {
+                                taskId: activeRun.taskId,
+                                status: activeRun.status,
+                                prompt: activeRun.prompt,
+                                startedAt: activeRun.startedAt
+                            } : null
                         }
                     });
                     return;
@@ -1318,13 +1509,24 @@ export async function startSkybridgeServer(options = {}) {
                     let diskSize = 0;
                     let diskHunks = [];
                     let diskAdditions = 0;
+                    let diskDeletions = 0;
+                    let fromLastCommit = false;
                     if (abs) {
                         try {
                             const st = fs.lstatSync(abs);
                             if (!st.isSymbolicLink() && st.isFile()) {
                                 existsOnDisk = true;
                                 diskSize = st.size;
-                                if (st.size > 0 && st.size <= 48 * 1024 && (!ev || ev.hunks.length === 0)) {
+                                if (isGit && (!ev || ev.hunks.length === 0)) {
+                                    const commitDiff = readLastGitCommitDiffForFile(workspaceRoot, rel);
+                                    if (commitDiff) {
+                                        diskHunks = commitDiff.hunks;
+                                        diskAdditions = commitDiff.additions;
+                                        diskDeletions = commitDiff.deletions;
+                                        fromLastCommit = true;
+                                    }
+                                }
+                                if (diskHunks.length === 0 && st.size > 0 && st.size <= 48 * 1024 && (!ev || ev.hunks.length === 0)) {
                                     const buf = fs.readFileSync(abs);
                                     if (!buf.includes(0)) {
                                         const synth = buildSynthesizedWriteHunk(buf.toString('utf8'));
@@ -1340,11 +1542,16 @@ export async function startSkybridgeServer(options = {}) {
                     }
                     const hunks = ev && ev.hunks.length > 0 ? ev.hunks : diskHunks;
                     const additions = ev && ev.additions > 0 ? ev.additions : diskAdditions;
-                    const deletions = ev ? ev.deletions : 0;
-                    const status = ev?.status ?? (existsOnDisk ? 'modified' : 'added');
+                    const deletions = ev && ev.deletions > 0 ? ev.deletions : diskDeletions;
+                    const status = fromLastCommit && diskDeletions > 0
+                        ? 'modified'
+                        : (ev?.status ?? (existsOnDisk ? 'modified' : 'added'));
                     let note;
                     if (existsOnDisk) {
-                        if (hunks.length === 0) {
+                        if (fromLastCommit) {
+                            note = 'Latest committed diff on disk';
+                        }
+                        else if (hunks.length === 0) {
                             note = diskSize > 0
                                 ? `On disk (${formatByteSize(diskSize)}) · ${isGit ? 'committed or binary asset' : 'workspace file'}`
                                 : (isGit ? 'Clean on disk' : 'Touched in this conversation');
@@ -1952,32 +2159,73 @@ export async function startSkybridgeServer(options = {}) {
             if (req.method === 'POST' && pathname === '/api/approve') {
                 const body = await readJsonBody(req);
                 const toolCallId = typeof body.toolCallId === 'string' ? body.toolCallId.trim() : '';
+                const sessionId = typeof body.sessionId === 'string' && SAFE_SESSION_ID_RE.test(body.sessionId.trim())
+                    ? body.sessionId.trim()
+                    : '';
                 const approved = body.approved === true;
                 const remember = body.remember === true;
                 const toolName = typeof body.tool === 'string' ? body.tool.trim().slice(0, 80) : '';
-                if (!toolCallId || !activeLoop?.resolveApproval) {
+                const targetRun = findActiveRun(sessionId || null);
+                if (!toolCallId || !targetRun?.loop.resolveApproval) {
                     sendJson(res, 400, { error: 'No active pending approval matches that toolCallId.' });
                     return;
                 }
-                if (approved && remember && toolName && activeLoop.grantAlways) {
-                    activeLoop.grantAlways(toolName);
+                if (approved && remember && toolName && targetRun.loop.grantAlways) {
+                    targetRun.loop.grantAlways(toolName);
                     auditLog.log({ event: 'skybridge_approval_grant_always', tool: toolName });
                 }
-                activeLoop.resolveApproval(toolCallId, approved);
+                targetRun.status = 'running';
+                targetRun.loop.resolveApproval(toolCallId, approved);
                 sendJson(res, 200, { ok: true, toolCallId, approved, remembered: Boolean(approved && remember && toolName) });
                 return;
             }
+            if (req.method === 'POST' && pathname === '/api/decision') {
+                const body = await readJsonBody(req);
+                const requestId = typeof body.requestId === 'string' ? body.requestId.trim() : '';
+                const sessionId = typeof body.sessionId === 'string' && SAFE_SESSION_ID_RE.test(body.sessionId.trim())
+                    ? body.sessionId.trim()
+                    : '';
+                const label = typeof body.label === 'string' ? body.label.trim().slice(0, 400) : '';
+                const optionId = typeof body.optionId === 'string' ? body.optionId.trim().slice(0, 120) : null;
+                const custom = body.custom === true;
+                const targetRun = findActiveRun(sessionId || null);
+                if (!requestId || !targetRun?.loop.resolveDecision) {
+                    sendJson(res, 400, { error: 'No active pending decision matches that requestId.' });
+                    return;
+                }
+                targetRun.status = 'running';
+                targetRun.loop.resolveDecision(requestId, label ? { optionId, label, custom } : null);
+                sendJson(res, 200, { ok: true, requestId, label });
+                return;
+            }
             if (req.method === 'POST' && pathname === '/api/stop') {
-                if (activeLoop?.abort)
-                    activeLoop.abort();
+                let stopSessionId = '';
+                try {
+                    const body = await readJsonBody(req);
+                    if (typeof body.sessionId === 'string' && SAFE_SESSION_ID_RE.test(body.sessionId.trim())) {
+                        stopSessionId = body.sessionId.trim();
+                    }
+                }
+                catch {
+                    // Empty body is valid for /api/stop.
+                }
+                if (stopSessionId) {
+                    const run = activeRuns.get(stopSessionId);
+                    if (run) {
+                        run.userStopped = true;
+                        run.loop.abort?.();
+                    }
+                }
+                else {
+                    for (const run of activeRuns.values()) {
+                        run.userStopped = true;
+                        run.loop.abort?.();
+                    }
+                }
                 sendJson(res, 200, { ok: true });
                 return;
             }
             if (req.method === 'POST' && pathname === '/api/chat') {
-                if (activeLoop) {
-                    sendJson(res, 409, { error: 'Another task is currently running. Stop it before starting a new one.' });
-                    return;
-                }
                 const body = await readJsonBody(req);
                 const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
                 const rawMode = typeof body.mode === 'string' ? body.mode.trim().toUpperCase() : 'B';
@@ -2002,15 +2250,19 @@ export async function startSkybridgeServer(options = {}) {
                 if (!boundSession && !hasCustomFactory) {
                     boundSession = createSession(workspaceRoot, prompt.slice(0, 60), false);
                 }
+                const runKey = boundSession?.id || '__ephemeral__';
+                const existingRun = activeRuns.get(runKey);
+                if (existingRun && (existingRun.status === 'running' || existingRun.status === 'awaiting_client')) {
+                    sendJson(res, 409, {
+                        error: 'This conversation already has a task running. Stop it or wait for completion.'
+                    });
+                    return;
+                }
                 const { effectivePrompt, attachedPaths } = buildWorkspacePromptWithAttachments(workspaceRoot, prompt, body.attachments);
-                res.statusCode = 200;
-                res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-                res.setHeader('Transfer-Encoding', 'chunked');
                 const taskId = `web-${++taskCounter}-${Date.now()}`;
                 let collectedAssistantText = '';
-                const writeFrame = (raw) => {
-                    if (res.writableEnded || res.destroyed)
-                        return;
+                let runRef = null;
+                const emitFrame = (raw) => {
                     const clean = raw.replace(/\r?\n/g, ' ');
                     try {
                         const parsed = JSON.parse(clean);
@@ -2020,77 +2272,63 @@ export async function startSkybridgeServer(options = {}) {
                         else if (parsed.type === 'agent_message' && typeof parsed.content === 'string' && !collectedAssistantText) {
                             collectedAssistantText = parsed.content;
                         }
+                        if (runRef && (parsed.type === 'approval_request' || parsed.type === 'decision_request')) {
+                            runRef.status = 'awaiting_client';
+                        }
+                        const toolLower = typeof parsed.tool === 'string' ? parsed.tool.toLowerCase() : '';
+                        const actionLower = typeof parsed.actionName === 'string' ? parsed.actionName.toLowerCase() : '';
+                        if (boundSession?.id) {
+                            if (parsed.type === 'code_progress' && typeof parsed.path === 'string') {
+                                recordSessionTouchedFile(boundSession.id, parsed.path);
+                            }
+                            else if ((parsed.type === 'step_complete' || parsed.type === 'tool_result')
+                                && MUTATING_FILE_TOOLS.has(toolLower)
+                                && parsed.args) {
+                                for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'filename', 'file', 'destination']) {
+                                    recordSessionTouchedFile(boundSession.id, parsed.args[key]);
+                                }
+                            }
+                            else if (parsed.type === 'notice' && MUTATING_FILE_TOOLS.has(actionLower) && parsed.detail) {
+                                recordSessionTouchedFile(boundSession.id, parsed.detail);
+                            }
+                        }
+                        const isBrowserTool = toolLower.includes('browser');
+                        const isComputerTool = toolLower.includes('computer_use') || toolLower.includes('desktop_act');
+                        if ((parsed.type === 'step_start' || parsed.type === 'tool_start') && (isBrowserTool || isComputerTool)) {
+                            if (isBrowserTool)
+                                browserControlOwner = 'agent';
+                            const detail = isBrowserTool && Array.isArray(parsed.args?.actions) && parsed.args.actions[0]
+                                ? String(parsed.args.actions[0].type || 'browser.act')
+                                : String(parsed.args?.action || parsed.tool || '');
+                            browserAgentActivity = {
+                                active: true,
+                                tool: parsed.tool || 'browser.act',
+                                detail: detail.slice(0, 80),
+                                updatedAt: Date.now()
+                            };
+                            broadcastBrowserNotice({
+                                type: 'agent_activity',
+                                controlOwner: browserControlOwner,
+                                agentActivity: browserAgentActivity
+                            });
+                        }
+                        else if ((parsed.type === 'step_complete' || parsed.type === 'step_error' || parsed.type === 'tool_complete')
+                            && (isBrowserTool || isComputerTool)) {
+                            browserAgentActivity = { active: false, tool: '', detail: '', updatedAt: Date.now() };
+                            broadcastBrowserNotice({
+                                type: 'agent_activity',
+                                controlOwner: browserControlOwner,
+                                agentActivity: browserAgentActivity
+                            });
+                        }
                     }
                     catch {
                         // pass raw frame through untouched
                     }
-                    res.write(`${clean}\n`);
+                    if (runRef)
+                        pushRunFrame(runRef, clean);
                 };
-                if (boundSession) {
-                    writeFrame(JSON.stringify({
-                        type: 'session_bound',
-                        sessionId: boundSession.id,
-                        title: boundSession.title,
-                        attachments: attachedPaths
-                    }));
-                }
-                const sink = { readyState: 1, send: writeFrame };
-                const wrappedSink = {
-                    readyState: 1,
-                    send: (raw) => {
-                        try {
-                            const parsed = JSON.parse(raw);
-                            const toolLower = typeof parsed.tool === 'string' ? parsed.tool.toLowerCase() : '';
-                            const actionLower = typeof parsed.actionName === 'string' ? parsed.actionName.toLowerCase() : '';
-                            if (boundSession?.id) {
-                                if (parsed.type === 'code_progress' && typeof parsed.path === 'string') {
-                                    recordSessionTouchedFile(boundSession.id, parsed.path);
-                                }
-                                else if ((parsed.type === 'step_complete' || parsed.type === 'tool_result')
-                                    && MUTATING_FILE_TOOLS.has(toolLower)
-                                    && parsed.args) {
-                                    for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'filename', 'file', 'destination']) {
-                                        recordSessionTouchedFile(boundSession.id, parsed.args[key]);
-                                    }
-                                }
-                                else if (parsed.type === 'notice' && MUTATING_FILE_TOOLS.has(actionLower) && parsed.detail) {
-                                    recordSessionTouchedFile(boundSession.id, parsed.detail);
-                                }
-                            }
-                            const isBrowserTool = toolLower.includes('browser');
-                            const isComputerTool = toolLower.includes('computer_use') || toolLower.includes('desktop_act');
-                            if ((parsed.type === 'step_start' || parsed.type === 'tool_start') && (isBrowserTool || isComputerTool)) {
-                                if (isBrowserTool)
-                                    browserControlOwner = 'agent';
-                                const detail = isBrowserTool && Array.isArray(parsed.args?.actions) && parsed.args.actions[0]
-                                    ? String(parsed.args.actions[0].type || 'browser.act')
-                                    : String(parsed.args?.action || parsed.tool || '');
-                                browserAgentActivity = {
-                                    active: true,
-                                    tool: parsed.tool || 'browser.act',
-                                    detail: detail.slice(0, 80),
-                                    updatedAt: Date.now()
-                                };
-                                broadcastBrowserNotice({
-                                    type: 'agent_activity',
-                                    controlOwner: browserControlOwner,
-                                    agentActivity: browserAgentActivity
-                                });
-                            }
-                            else if ((parsed.type === 'step_complete' || parsed.type === 'step_error' || parsed.type === 'tool_complete')
-                                && (isBrowserTool || isComputerTool)) {
-                                browserAgentActivity = { active: false, tool: '', detail: '', updatedAt: Date.now() };
-                                broadcastBrowserNotice({
-                                    type: 'agent_activity',
-                                    controlOwner: browserControlOwner,
-                                    agentActivity: browserAgentActivity
-                                });
-                            }
-                        }
-                        catch { /* ignore */ }
-                        sink.send(raw);
-                    }
-                };
+                const wrappedSink = { readyState: 1, send: emitFrame };
                 const loop = loopFactory(wrappedSink, taskId, effectivePrompt, {
                     workspaceRoot,
                     mode,
@@ -2098,48 +2336,103 @@ export async function startSkybridgeServer(options = {}) {
                     provider: providerOverride,
                     model: modelOverride
                 });
-                activeLoop = loop;
-                req.on('close', () => {
-                    if (activeLoop === loop && !res.writableEnded) {
-                        loop.abort?.();
-                    }
-                });
-                try {
-                    await loop.run();
-                    if (boundSession && hasCustomFactory && collectedAssistantText.trim()) {
-                        const latest = getSession(boundSession.id);
-                        if (latest) {
-                            const nextMessages = [
-                                ...latest.messages,
-                                { role: 'user', content: prompt },
-                                { role: 'assistant', content: collectedAssistantText.trim() }
-                            ];
-                            saveSessionMessages(boundSession.id, nextMessages);
+                const run = {
+                    key: runKey,
+                    sessionId: boundSession?.id || null,
+                    taskId,
+                    prompt,
+                    startedAt: Date.now(),
+                    status: 'running',
+                    userStopped: false,
+                    loop,
+                    frames: [],
+                    bufferedBytes: 0,
+                    subscribers: new Set(),
+                    doneSubscribers: new Set()
+                };
+                runRef = run;
+                activeRuns.set(runKey, run);
+                if (boundSession) {
+                    pushRunFrame(run, JSON.stringify({
+                        type: 'session_bound',
+                        sessionId: boundSession.id,
+                        title: boundSession.title,
+                        attachments: attachedPaths
+                    }));
+                }
+                // Attach current HTTP response BEFORE starting loop; detaching later never aborts loop.
+                attachRunStream(req, res, run, true);
+                void (async () => {
+                    try {
+                        await loop.run();
+                        if (boundSession && hasCustomFactory && collectedAssistantText.trim()) {
+                            const latest = getSession(boundSession.id);
+                            if (latest) {
+                                const nextMessages = [
+                                    ...latest.messages,
+                                    { role: 'user', content: prompt },
+                                    { role: 'assistant', content: collectedAssistantText.trim() }
+                                ];
+                                saveSessionMessages(boundSession.id, nextMessages);
+                            }
+                        }
+                        const refreshed = boundSession ? getSession(boundSession.id) : null;
+                        if (run.userStopped) {
+                            run.status = 'stopped';
+                            pushRunFrame(run, JSON.stringify({
+                                type: 'stopped',
+                                taskId,
+                                sessionId: boundSession?.id || null,
+                                title: refreshed?.title || boundSession?.title || null,
+                                userStopped: true
+                            }));
+                        }
+                        else {
+                            run.status = 'completed';
+                            pushRunFrame(run, JSON.stringify({
+                                type: 'done',
+                                taskId,
+                                sessionId: boundSession?.id || null,
+                                title: refreshed?.title || boundSession?.title || null
+                            }));
                         }
                     }
-                    writeFrame(JSON.stringify({
-                        type: 'done',
-                        taskId,
-                        sessionId: boundSession?.id || null
-                    }));
-                }
-                catch (err) {
-                    auditLog.log({
-                        event: 'skybridge_chat_error',
-                        taskId,
-                        detail: redactProviderSecrets(err instanceof Error ? err.message : String(err)).slice(0, 300)
-                    });
-                    writeFrame(JSON.stringify({
-                        type: 'error',
-                        message: 'Task failed. Inspect local audit log or run `/doctor --report` for sanitized details.'
-                    }));
-                }
-                finally {
-                    if (activeLoop === loop)
-                        activeLoop = null;
-                    if (!res.writableEnded)
-                        res.end();
-                }
+                    catch (err) {
+                        run.status = run.userStopped ? 'stopped' : 'errored';
+                        if (run.userStopped) {
+                            pushRunFrame(run, JSON.stringify({
+                                type: 'stopped',
+                                taskId,
+                                sessionId: boundSession?.id || null,
+                                userStopped: true
+                            }));
+                        }
+                        else {
+                            auditLog.log({
+                                event: 'skybridge_chat_error',
+                                taskId,
+                                detail: redactProviderSecrets(err instanceof Error ? err.message : String(err)).slice(0, 300)
+                            });
+                            pushRunFrame(run, JSON.stringify({
+                                type: 'error',
+                                message: 'Task failed. Inspect local audit log or run `/doctor --report` for sanitized details.'
+                            }));
+                        }
+                    }
+                    finally {
+                        for (const doneCb of [...run.doneSubscribers]) {
+                            try {
+                                doneCb();
+                            }
+                            catch { /* ignore */ }
+                        }
+                        run.subscribers.clear();
+                        run.doneSubscribers.clear();
+                        if (activeRuns.get(runKey) === run) {
+                            activeRuns.delete(runKey);
+                        }
+                    }
+                })();
                 return;
             }
             sendJson(res, 404, { error: 'Unknown Skybridge API endpoint.' });
@@ -2162,6 +2455,11 @@ export async function startSkybridgeServer(options = {}) {
                 res.end();
         }
     });
+    // Disable Node's default 5-minute requestTimeout so long AgentLoop runs never drop mid-stream.
+    server.requestTimeout = 0;
+    server.timeout = 0;
+    server.headersTimeout = 60_000;
+    server.keepAliveTimeout = 65_000;
     await new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(requestedPort, '127.0.0.1', () => {
@@ -2181,9 +2479,17 @@ export async function startSkybridgeServer(options = {}) {
         token,
         workspaceRoot,
         close: async () => {
-            if (activeLoop?.abort)
-                activeLoop.abort();
-            activeLoop = null;
+            for (const run of activeRuns.values()) {
+                run.userStopped = true;
+                run.loop.abort?.();
+                for (const doneCb of [...run.doneSubscribers]) {
+                    try {
+                        doneCb();
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+            activeRuns.clear();
             server.closeAllConnections?.();
             await new Promise((resolve) => server.close(() => resolve()));
         }
