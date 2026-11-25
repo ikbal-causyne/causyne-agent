@@ -438,8 +438,15 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
           await loop.run();
           writeFrame(JSON.stringify({ type: 'done', taskId }));
         } catch (err: unknown) {
-          const msg = redactProviderSecrets(err instanceof Error ? err.message : String(err));
-          writeFrame(JSON.stringify({ type: 'error', message: msg }));
+          auditLog.log({
+            event: 'skybridge_chat_error',
+            taskId,
+            detail: redactProviderSecrets(err instanceof Error ? err.message : String(err)).slice(0, 300)
+          });
+          writeFrame(JSON.stringify({
+            type: 'error',
+            message: 'Task failed. Inspect local audit log or run `/doctor --report` for sanitized details.'
+          }));
         } finally {
           if (activeLoop === loop) activeLoop = null;
           if (!res.writableEnded) res.end();
@@ -451,8 +458,16 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
     } catch (err: unknown) {
       const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as any).code) : '';
       const status = code === 'ENOENT' ? 404 : 400;
-      const msg = redactProviderSecrets(err instanceof Error ? err.message : String(err));
-      if (!res.headersSent) sendJson(res, status, { error: msg });
+      auditLog.log({
+        event: 'skybridge_request_error',
+        path: pathname,
+        status,
+        detail: redactProviderSecrets(err instanceof Error ? err.message : String(err)).slice(0, 300)
+      });
+      const safeError = status === 404
+        ? 'Requested workspace resource was not found.'
+        : 'Skybridge request could not be processed.';
+      if (!res.headersSent) sendJson(res, status, { error: safeError });
       else if (!res.writableEnded) res.end();
     }
   });
@@ -480,6 +495,7 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
     close: async () => {
       if (activeLoop?.abort) activeLoop.abort();
       activeLoop = null;
+      server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   };

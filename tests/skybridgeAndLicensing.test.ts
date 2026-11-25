@@ -60,9 +60,10 @@ function rawHttpRequest(options: {
 
 describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Probe', () => {
   test('licensing checkout allowlist permits Paddle, Dodo Payments, and causyne.com while blocking lookalikes and retired hosts', async () => {
-    assert.ok(LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIXES.includes('paddle.com'));
-    assert.ok(LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIXES.includes('dodopayments.com'));
-    assert.ok(LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIXES.includes('causyne.com'));
+    assert.deepEqual(
+      [...LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIXES],
+      ['paddle.com', 'dodopayments.com', 'causyne.com']
+    );
 
     assert.equal(isAllowedCheckoutHost('checkout.paddle.com'), true);
     assert.equal(isAllowedCheckoutHost('buy.paddle.com'), true);
