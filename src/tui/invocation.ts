@@ -32,6 +32,7 @@
 export const ROOT_OPTIONS: Map<string, number> = new Map([
   ['-h', 0],
   ['--help', 0],
+  ['-v', 0],
   ['-V', 0],
   ['--version', 0],
   ['-C', 1],
@@ -40,7 +41,7 @@ export const ROOT_OPTIONS: Map<string, number> = new Map([
 ]);
 
 /** Options that mean "print something and exit", never "launch the app". */
-const HELP_OR_VERSION = new Set(['-h', '--help', '-V', '--version']);
+const HELP_OR_VERSION = new Set(['-h', '--help', '-v', '-V', '--version']);
 
 export interface InvocationResolution {
   commandPath: string[];

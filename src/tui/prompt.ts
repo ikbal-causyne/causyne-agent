@@ -61,8 +61,10 @@ export interface ChatPromptOptions {
   onExit?: () => void;
   onExpand?: () => void;
   onOpenMode?: (() => unknown) | null;
+  onCycleMode?: (() => unknown) | null;
   onOpenModel?: (() => unknown) | null;
   onOpenVariant?: (() => unknown) | null;
+  onOpenVariantList?: (() => unknown) | null;
   messageActionLoop?: any;
   getMode?: () => string;
   history?: PromptHistory;
@@ -108,8 +110,10 @@ export class ChatPrompt {
   onExit: () => void;
   onExpand: () => void;
   onOpenMode: (() => unknown) | null;
+  onCycleMode: (() => unknown) | null;
   onOpenModel: (() => unknown) | null;
   onOpenVariant: (() => unknown) | null;
+  onOpenVariantList: (() => unknown) | null;
   messageActionLoop: any;
   getMode: () => string;
   editor: LineEditor;
@@ -165,8 +169,10 @@ export class ChatPrompt {
     this.onExit = opts.onExit || (() => process.exit(0));
     this.onExpand = opts.onExpand || (() => {});
     this.onOpenMode = opts.onOpenMode || null;
+    this.onCycleMode = opts.onCycleMode || null;
     this.onOpenModel = opts.onOpenModel || null;
     this.onOpenVariant = opts.onOpenVariant || null;
+    this.onOpenVariantList = opts.onOpenVariantList || null;
     this.messageActionLoop = opts.messageActionLoop || null;
     this.getMode = opts.getMode || (() => 'B');
 
@@ -449,6 +455,7 @@ export class ChatPrompt {
     const mode = `${this.busy ? 'Working' : 'Build'} ${this.getMode()}`;
     const parts = [bold(paint('accent', mode))];
     if (status.model) parts.push(bold(paint('ink', status.model)));
+    if (status.variant) parts.push(paint('accent', `[${status.variant}]`));
     const line = parts.join(dim(`  ${GLYPHS.dot}  `));
     const trailing = [status.provider, status.tier].filter(Boolean).join(' ');
     const base = trailing ? `${line}  ${dim(trailing)}` : line;
@@ -457,7 +464,7 @@ export class ChatPrompt {
     if (this.editor.lines.length > 1) details.push(`${this.editor.lines.length} lines`);
     const extra = details.length ? dim(`  ${GLYPHS.dot}  ${details.join(' · ')}`) : '';
     const withMeta = visibleWidth(base) + visibleWidth(extra) <= width ? base + extra : base;
-    const hints = dim('  Ctrl+G mode · Alt+M model · Ctrl+T variant');
+    const hints = dim('  Ctrl+G/⇧Tab mode · Alt+M model · Ctrl+T variant');
     const full = visibleWidth(withMeta) + visibleWidth(hints) <= width ? withMeta + hints : withMeta;
     return visibleWidth(full) > width ? truncate(full, width, GLYPHS.ellipsis) : full;
   }
@@ -563,12 +570,21 @@ export class ChatPrompt {
     this.scheduleDraw();
   }
 
-  updateModel(provider?: unknown, model?: unknown): void {
+  updateModel(provider?: unknown, model?: unknown, variant?: unknown): void {
+    const nextProvider = provider ? String(provider) : '';
+    const nextModel = model ? String(model) : '';
+    const sessionUpdate: Record<string, string> = {
+      provider: nextProvider,
+      model: nextModel
+    };
+    if (variant !== undefined) {
+      sessionUpdate.variant = variant ? String(variant) : '';
+    }
     if (this.renderer && this.renderer.status) {
-      this.renderer.status.setSession({
-        provider: provider ? String(provider) : '',
-        model: model ? String(model) : ''
-      });
+      this.renderer.status.setSession(sessionUpdate);
+    }
+    if (this.surface && typeof this.surface.setSessionInfo === 'function') {
+      this.surface.setSessionInfo(sessionUpdate);
     }
     this.scheduleDraw();
   }
@@ -892,6 +908,8 @@ export class ChatPrompt {
     const commandToken = (trimmedLower.split(/\s+/, 1)[0] ?? '').toLowerCase();
     const isControlCommand = this.isCommand(text) && new Set([
       '/stop', '/interrupt', '/new', '/model', '/models',
+      '/variant', '/effort', '/reasoning', '/cortex',
+      '/gui', '/web', '/studio',
       '/session', '/sessions', '/continuum', '/clear'
     ]).has(commandToken);
 
@@ -1001,10 +1019,12 @@ export class ChatPrompt {
     if (this.completion && this.handleCompletionKey(key)) return;
     if (this.handleScrollKey(key)) return;
 
-    const isModeControl = Boolean(key.ctrl && key.name === 'g');
-    const control = isModeControl ? this.onOpenMode
+    const isModeControl = Boolean((key.ctrl && key.name === 'g') || (key.shift && key.name === 'tab' && this.onCycleMode));
+    const control = (key.ctrl && key.name === 'g') ? this.onOpenMode
+      : (key.shift && key.name === 'tab' && this.onCycleMode) ? this.onCycleMode
       : key.alt && key.name === 'm' ? this.onOpenModel
-      : key.ctrl && key.name === 't' ? this.onOpenVariant : null;
+      : key.ctrl && key.name === 't' ? this.onOpenVariant
+      : key.alt && key.name === 't' ? (this.onOpenVariantList || this.onOpenVariant) : null;
     if (control) {
       if (this.busy && !isModeControl) {
         this.notice = 'Finish or interrupt the current turn before switching controls';

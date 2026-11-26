@@ -7,11 +7,14 @@ import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byok
 import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 export class MoonshotProvider extends LLMProvider {
     allowInsecureHttp;
+    reasoningEffort;
     constructor(config = {}) {
         super(config);
         const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
         this.baseUrl = customUrl || 'https://api.moonshot.ai/v1/chat/completions';
         this.allowInsecureHttp = config.allowInsecureHttp === true;
+        const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+        this.reasoningEffort = rawEffort || null;
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['moonshot']) || '');
         this.visionModels = ['k3', 'kimi-k3', 'kimi-k2.5', 'vision'];
         this.audioModels = [];
@@ -28,6 +31,17 @@ export class MoonshotProvider extends LLMProvider {
         };
         if (!isThinkingModel) {
             payload['temperature'] = resolveTemperature(options.temperature, 0.1);
+        }
+        if (this.reasoningEffort && (isThinkingModel || loweredModel.startsWith('kimi-k2.5') || loweredModel.startsWith('kimi-k2.7') || loweredModel.startsWith('k3'))) {
+            if (this.reasoningEffort === 'off' || this.reasoningEffort === 'none') {
+                payload['thinking'] = { type: 'disabled' };
+            }
+            else {
+                payload['thinking'] = { type: 'enabled' };
+                if (['low', 'medium', 'high'].includes(this.reasoningEffort)) {
+                    payload['reasoning_effort'] = this.reasoningEffort;
+                }
+            }
         }
         if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
             payload['max_tokens'] = Math.floor(options.maxTokens);

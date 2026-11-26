@@ -12,7 +12,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { causyneHome } from './utils/paths.js';
 import { MODEL_CATALOGUE, PEER_MODEL_CATALOGUE, DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
@@ -468,6 +468,96 @@ export function parseModelIds(lines) {
     }
     return [...new Set(models)];
 }
+export function parseOpenCodeVerboseModels(stdout) {
+    const models = [];
+    const variantsByModel = {};
+    if (!stdout || typeof stdout !== 'string')
+        return { models, variantsByModel };
+    const lines = stdout.replace(ANSI_ESCAPE, '').split(/\r?\n/);
+    let currentModel = null;
+    let jsonLines = [];
+    let inJson = false;
+    let depth = 0;
+    const flushJson = () => {
+        if (!currentModel || jsonLines.length === 0) {
+            inJson = false;
+            depth = 0;
+            jsonLines = [];
+            currentModel = null;
+            return;
+        }
+        try {
+            const parsed = JSON.parse(jsonLines.join('\n'));
+            const rawVariants = parsed?.variants;
+            const keys = rawVariants && typeof rawVariants === 'object' && !Array.isArray(rawVariants)
+                ? Object.keys(rawVariants)
+                    .map((k) => k.trim())
+                    .filter((k) => k.length > 0 && k.length <= 64 && k.toLowerCase() !== 'default')
+                : [];
+            variantsByModel[currentModel] = keys;
+        }
+        catch {
+            // Malformed metadata block: keep discovered model ID without recording fake variants
+        }
+        inJson = false;
+        depth = 0;
+        jsonLines = [];
+        currentModel = null;
+    };
+    for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (!inJson) {
+            if (!trimmed)
+                continue;
+            if (trimmed.startsWith('{') && currentModel) {
+                inJson = true;
+                depth = 0;
+                jsonLines = [rawLine];
+            }
+            else if (/^[a-z0-9][a-z0-9_.-]*\/[a-z0-9_.:/-]+$/i.test(trimmed)) {
+                currentModel = trimmed;
+                if (!models.includes(trimmed))
+                    models.push(trimmed);
+                continue;
+            }
+            else {
+                continue;
+            }
+        }
+        else {
+            jsonLines.push(rawLine);
+        }
+        if (inJson) {
+            let inStr = false;
+            let escaped = false;
+            for (let i = 0; i < rawLine.length; i++) {
+                const ch = rawLine[i];
+                if (inStr) {
+                    if (escaped) {
+                        escaped = false;
+                    }
+                    else if (ch === '\\') {
+                        escaped = true;
+                    }
+                    else if (ch === '"') {
+                        inStr = false;
+                    }
+                    continue;
+                }
+                if (ch === '"')
+                    inStr = true;
+                else if (ch === '{')
+                    depth++;
+                else if (ch === '}')
+                    depth--;
+            }
+            if (depth <= 0) {
+                flushJson();
+            }
+        }
+    }
+    return { models, variantsByModel };
+}
 export function parsePiModelsOutput(stdout) {
     const models = [];
     if (!stdout || typeof stdout !== 'string')
@@ -751,7 +841,31 @@ export async function discoverPeerModels(peerId, options = {}) {
         return discoverPiModels();
     }
     const configModels = detectPeerConfigModels(peer);
-    // 1. Fast CLI `models` subcommand (e.g. `opencode models`, `cursor-agent models`)
+    // 1. Fast CLI `models` subcommand (e.g. `opencode models --verbose`, `cursor-agent models`)
+    if (peer === 'opencode' && isBinaryOnPath('opencode')) {
+        try {
+            const { stdout } = await execFileAsync('opencode', ['models', '--verbose'], {
+                timeout: MODEL_LIST_TIMEOUT_MS,
+                maxBuffer: 8 * 1024 * 1024,
+                windowsHide: true,
+                env: { ...process.env, CI: '1', BROWSER: 'false', NO_BROWSER: '1' }
+            });
+            const parsed = parseOpenCodeVerboseModels(stdout);
+            if (parsed.models.length > 0) {
+                const merged = [...new Set([...parsed.models, ...configModels])];
+                if (!process.env.NODE_TEST_CONTEXT && Object.keys(parsed.variantsByModel).length > 0) {
+                    saveCachedModels('acp/opencode', merged, {
+                        variantsByModel: parsed.variantsByModel,
+                        replaceVariants: true
+                    });
+                }
+                return merged;
+            }
+        }
+        catch {
+            // Fall through to standard `opencode models`
+        }
+    }
     const listing = PEER_MODEL_COMMANDS[peer];
     if (listing && isBinaryOnPath(listing.command)) {
         const discovered = parseModelIds(await runModelList(listing.command, listing.args));
@@ -877,6 +991,7 @@ export function saveCachedModels(provider, models, options = {}) {
         updatedAt: new Date().toISOString(),
         providers: {}
     };
+    const existing = cache.providers[norm];
     const entry = {
         timestamp: Date.now(),
         models: [...new Set(models)],
@@ -898,9 +1013,127 @@ export function saveCachedModels(provider, models, options = {}) {
     if (options.currentModel) {
         entry.currentModel = options.currentModel;
     }
+    if (options.variantsByModel && Object.keys(options.variantsByModel).length > 0) {
+        const base = options.replaceVariants ? {} : { ...(existing?.variantsByModel || {}) };
+        for (const [k, v] of Object.entries(options.variantsByModel)) {
+            if (k && Array.isArray(v)) {
+                base[k] = [...new Set(v.map((item) => String(item).trim()).filter(Boolean))];
+            }
+        }
+        entry.variantsByModel = base;
+    }
+    else if (existing?.variantsByModel && Object.keys(existing.variantsByModel).length > 0) {
+        entry.variantsByModel = { ...existing.variantsByModel };
+    }
     cache.providers[norm] = entry;
     cache.updatedAt = new Date().toISOString();
     writeModelCache(cache);
+}
+const peerVariantProbeCooldown = new Map();
+function lookupModelVariantsInMap(variantsByModel, model, peerId) {
+    if (!variantsByModel || typeof variantsByModel !== 'object')
+        return null;
+    const clean = model.trim();
+    if (!clean)
+        return null;
+    if (Object.hasOwn(variantsByModel, clean) && Array.isArray(variantsByModel[clean])) {
+        return [...variantsByModel[clean]];
+    }
+    const lower = clean.toLowerCase();
+    const prefixed = peerId && !clean.includes('/') ? `${peerId}/${clean}` : '';
+    const prefixedLower = prefixed.toLowerCase();
+    const suffixLower = `/${lower}`;
+    for (const [key, val] of Object.entries(variantsByModel)) {
+        if (!Array.isArray(val))
+            continue;
+        const keyLower = key.toLowerCase();
+        if (keyLower === lower || (prefixedLower && keyLower === prefixedLower) || keyLower.endsWith(suffixLower)) {
+            return [...val];
+        }
+    }
+    return null;
+}
+/**
+ * Retrieve the real provider-published variant list for a peer model (e.g. OpenCode).
+ * Returns:
+ * - `string[]` (possibly empty `[]`) when the peer's catalogue authoritatively specifies variants for this model.
+ * - `null` when no authoritative peer metadata exists for this provider/model.
+ */
+export function getModelVariantsForPeer(provider, model, config = {}) {
+    const norm = normalizeProviderKey(provider);
+    const peer = peerIdFromProviderKey(norm);
+    if (!peer)
+        return null;
+    const cache = readModelCache();
+    const entry = cache?.providers?.[norm];
+    const ttl = PEER_CACHE_TTL_MS;
+    const fresh = Boolean(entry && (Date.now() - entry.timestamp <= ttl));
+    const fingerprintMatches = !entry?.fingerprint || entry.fingerprint === computeProviderAuthFingerprint(norm, config);
+    if (entry?.variantsByModel && fresh && fingerprintMatches) {
+        const hit = lookupModelVariantsInMap(entry.variantsByModel, model, peer);
+        if (hit !== null)
+            return hit;
+    }
+    // On-demand bounded probe for OpenCode verbose metadata when cache lacks variantsByModel
+    if (peer === 'opencode' && !process.env.NODE_TEST_CONTEXT && isBinaryOnPath('opencode')) {
+        const lastFail = peerVariantProbeCooldown.get(norm) || 0;
+        if (Date.now() - lastFail > 60_000) {
+            try {
+                const stdout = execFileSync('opencode', ['models', '--verbose'], {
+                    encoding: 'utf8',
+                    timeout: 4500,
+                    maxBuffer: 8 * 1024 * 1024,
+                    windowsHide: true,
+                    stdio: ['ignore', 'pipe', 'ignore'],
+                    env: { ...process.env, CI: '1', BROWSER: 'false', NO_BROWSER: '1' }
+                });
+                const parsed = parseOpenCodeVerboseModels(stdout);
+                if (parsed.models.length > 0 && Object.keys(parsed.variantsByModel).length > 0) {
+                    saveCachedModels(norm, parsed.models, {
+                        config,
+                        variantsByModel: parsed.variantsByModel,
+                        replaceVariants: true
+                    });
+                    const hit = lookupModelVariantsInMap(parsed.variantsByModel, model, peer);
+                    if (hit !== null)
+                        return hit;
+                }
+            }
+            catch {
+                peerVariantProbeCooldown.set(norm, Date.now());
+            }
+        }
+    }
+    // Fallback to stale cached metadata if present rather than fabricating variants
+    if (entry?.variantsByModel) {
+        return lookupModelVariantsInMap(entry.variantsByModel, model, peer);
+    }
+    return null;
+}
+/**
+ * Return the full live Antigravity model pool (cached live `agy models` + hydrated
+ * runtime registry + baseline fallback) so sibling variant detection always sees
+ * account-specific models such as Gemini 4 Neon (XHigh) and Gemini 4 Carbon (High).
+ */
+export function getLiveAntigravityModels(config = {}) {
+    const cached = getCachedModels('antigravity', config);
+    if (cached && cached.length > 0) {
+        return replaceAntigravityModels(cached);
+    }
+    const rawEntry = readModelCache()?.providers?.antigravity;
+    if (rawEntry && Array.isArray(rawEntry.models) && rawEntry.models.length > 0) {
+        if (rawEntry.modelIdMap && typeof rawEntry.modelIdMap === 'object') {
+            for (const [label, slug] of Object.entries(rawEntry.modelIdMap)) {
+                if (typeof slug === 'string' && slug.trim()) {
+                    registerAntigravityModel(slug.trim(), label);
+                }
+            }
+        }
+        return [...new Set([...rawEntry.models, ...ANTIGRAVITY_MODELS])];
+    }
+    return ANTIGRAVITY_MODELS.length > 0
+        ? [...ANTIGRAVITY_MODELS]
+        : Object.keys(BASELINE_ANTIGRAVITY_MODELS);
 }
 /** Live query provider API or CLI/ACP peer to discover available models */
 export async function fetchLiveModels(provider, config = {}) {

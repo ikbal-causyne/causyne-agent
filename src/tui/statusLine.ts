@@ -78,6 +78,7 @@ function shortModel(model: unknown): string {
 export interface StatusLineSessionInfo {
   model?: string | undefined;
   provider?: string | undefined;
+  variant?: string | undefined;
   tier?: string | undefined;
   cwd?: string | undefined;
   contextLimit?: number | string | undefined;
@@ -106,6 +107,7 @@ function finiteWidth(width: number | undefined): number {
 export class StatusLine {
   model = '';
   provider = '';
+  variant = '';
   tier = '';
   cwd = '';
   // Both in CHARACTERS — the unit the window is actually budgeted in.
@@ -133,6 +135,7 @@ export class StatusLine {
     if (!info || typeof info !== 'object') return this;
     if (info.model !== undefined) this.model = shortModel(info.model);
     if (info.provider !== undefined) this.provider = info.provider ? oneLineDisplay(info.provider) : '';
+    if (info.variant !== undefined) this.variant = info.variant ? oneLineDisplay(info.variant) : '';
     if (info.tier !== undefined) this.tier = info.tier ? oneLineDisplay(info.tier) : '';
     if (info.cwd !== undefined) this.cwd = info.cwd ? oneLineDisplay(info.cwd) : '';
     this.applyContextWindow(info.contextChars, info.contextLimit);
@@ -229,7 +232,9 @@ export class StatusLine {
       Math.round(this.contextLimit / CHARS_PER_TOKEN)
     );
     if (meter) segments.push(meter);
-    if (this.model) segments.push(this.model);
+    if (this.model) {
+      segments.push(this.variant ? `${this.model} [${this.variant}]` : this.model);
+    }
 
     const separator = `  ${GLYPHS.dot}  `;
     const sepWidth = visibleWidth(separator);
@@ -279,7 +284,7 @@ export class StatusLine {
    */
   renderStatic(message: string, width = 80): string {
     const parts = [oneLineDisplay(message)];
-    if (this.model) parts.push(this.model);
+    if (this.model) parts.push(this.variant ? `${this.model} [${this.variant}]` : this.model);
     return truncate(`${GLYPHS.dot} ${parts.join(`  ${GLYPHS.dot}  `)}`, finiteWidth(width), GLYPHS.ellipsis);
   }
 }

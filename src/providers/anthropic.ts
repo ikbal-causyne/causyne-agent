@@ -173,6 +173,20 @@ export class AnthropicProvider extends LLMProvider {
     if (this.reasoningBudgetTokens) {
       return { type: 'enabled', budget_tokens: this.reasoningBudgetTokens };
     }
+    if (this.reasoningEffort && ['claude-3-7-sonnet', 'claude-sonnet-4', 'claude-opus-4'].some((p) => (this.model || '').toLowerCase().startsWith(p))) {
+      const budgetMap: Record<string, number> = {
+        low: 4096,
+        medium: 10240,
+        high: 24576,
+        xhigh: 32768,
+        max: 48000,
+        ultra: 48000
+      };
+      const budget = budgetMap[this.reasoningEffort.toLowerCase()];
+      if (budget) {
+        return { type: 'enabled', budget_tokens: budget };
+      }
+    }
     return null;
   }
 

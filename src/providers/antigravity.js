@@ -739,6 +739,7 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
 export class AntigravityProvider extends LLMProvider {
     command;
     printTimeout;
+    reasoningEffort = null;
     persistentWorkerEnabled;
     currentConversationId = null;
     lastTaskId = null;
@@ -751,6 +752,8 @@ export class AntigravityProvider extends LLMProvider {
         const candidate = config.model;
         this.model = (candidate && isAntigravityModel(candidate)) ? candidate : 'Gemini 3.8 Flash (Low)';
         this.command = config.command || resolveAgyBinary();
+        const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+        this.reasoningEffort = rawEffort || null;
         this.printTimeout = typeof config.printTimeout === 'string' && config.printTimeout.trim()
             ? config.printTimeout.trim()
             : '1800s';
@@ -1046,7 +1049,10 @@ export class AntigravityProvider extends LLMProvider {
                 'If you start a persistent local HTTP server, use `sysRunBg` or redirect stdio (`nohup ... </dev/null >/dev/null 2>&1 &`) so the server does not break with EIO when the turn pseudo-terminal closes.\n\n' + promptText;
         }
         const modelSlug = resolveAgyModelId(this.model);
-        const effort = resolveAgyEffort(this.model);
+        const explicitEffort = this.reasoningEffort && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(this.reasoningEffort)
+            ? this.reasoningEffort
+            : null;
+        const effort = explicitEffort || resolveAgyEffort(this.model);
         // Run the user's normal peer in the selected project. Do not substitute a
         // managed inference profile or hide project MCPs, skills, and instructions.
         const workspaceRoot = path.resolve(options.workspaceRoot || process.cwd());
@@ -1061,7 +1067,7 @@ export class AntigravityProvider extends LLMProvider {
             '--model',
             modelSlug
         ];
-        if (effort && (modelSlug.endsWith(`-${effort}`) || /-(low|medium|high|xhigh|max)$/i.test(modelSlug))) {
+        if (effort && (Boolean(explicitEffort) || modelSlug.endsWith(`-${effort}`) || /-(low|medium|high|xhigh|max|ultra)$/i.test(modelSlug))) {
             args.push('--effort', effort);
         }
         if (useConversation && this.currentConversationId) {

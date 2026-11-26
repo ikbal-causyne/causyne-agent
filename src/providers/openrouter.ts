@@ -81,6 +81,7 @@ export class OpenRouterProvider extends LLMProvider {
   public dataCollection: 'deny' | 'allow';
   public freeOnly: boolean;
   public allowInsecureHttp: boolean;
+  public reasoningEffort: string | null;
 
   constructor(config: Record<string, any> = {}) {
     super(config);
@@ -89,6 +90,8 @@ export class OpenRouterProvider extends LLMProvider {
     this.model = canonicalModelId(String(config['model'] || OPENROUTER_DEFAULT_FREE_MODEL));
     this.dataCollection = config['openrouterDataCollection'] === 'allow' ? 'allow' : 'deny';
     this.freeOnly = config['freeOnly'] !== false; // Default: free mode enforced
+    const rawEffort = typeof config['reasoningEffort'] === 'string' ? config['reasoningEffort'].trim().toLowerCase() : '';
+    this.reasoningEffort = rawEffort || null;
 
     // Verify model cost constraint upon instantiation
     if (this.freeOnly) {
@@ -220,6 +223,15 @@ export class OpenRouterProvider extends LLMProvider {
       };
       if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
         payload['max_tokens'] = Math.floor(options.maxTokens);
+      }
+      if (this.reasoningEffort) {
+        if (this.reasoningEffort === 'off' || this.reasoningEffort === 'none') {
+          payload['reasoning'] = { enabled: false };
+        } else if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(this.reasoningEffort)) {
+          payload['reasoning'] = { effort: this.reasoningEffort };
+        } else if (this.reasoningEffort === 'max' || this.reasoningEffort === 'ultra') {
+          payload['reasoning'] = { effort: 'high' };
+        }
       }
       if (options['jsonMode']) {
         payload['response_format'] = { type: 'json_object' };

@@ -129,13 +129,13 @@ ${PEER_COLLABORATION_POLICY}
 ${AGENT_USER_POLICY}
 
 # Operational Guidelines & Engineering Discipline
-- **Strict Mandatory English Only**: Operate, reason, plan, and communicate strictly and exclusively in English across all responses, plans, and thoughts. Non-English languages (including Indonesian) are permanently forbidden.
+- **Language & Communication**: Communicate clearly in the user's language by default unless repository instructions (such as \`AGENTS.md\` or \`CAUSYNE.md\`) specify a required language.
 - **Conciseness & Output**: Keep replies concise (<4 lines unless detail is requested). No preambles or postambles. Output exact file paths for files created or modified. Answer greetings or pure questions directly without tools.
 - **Proportional Exploration & No Blind Patching**: When the user names specific target files, read them directly instead of running redundant repository scans or \`git log\`. When targets are unspecified, inspect relevant docs/configs/structure first; never blindly scaffold template web files in an existing non-web project. Base edits on observed file contents; prefer \`apply_patch\` for multi-file edits and \`fs_edit\` for single-file surgical changes.
 - **Verification Loop**: After editing code, run the project's actual tests, typecheck, or build commands (e.g., \`node --test\`, \`tsc --noEmit\`, \`npm test\`, \`pytest\`). State only observed results and checks.
 - **Code Quality**: Write clear, runnable, idiomatic code following existing project conventions without trivial inline comments or TODO placeholders. Preserve unrelated behavior.
 - **Planning & Decisions**: Batch independent read-only calls together. Use \`update_plan\` only for genuinely complex multi-stage implementations (keep one step \`in_progress\`). Use \`request_decision\` only when a material architecture/product/security choice genuinely blocks progress.
-- **Git Commits**: When committing changes, use strictly a plain ultra-short single-word or minimal tag (e.g. \`fix\`, \`update\`, \`build\`) with zero narrative or bullet points.
+- **Git Commits**: Follow the target repository's commit message conventions and project instructions (such as \`AGENTS.md\` or \`git log\`) when committing changes.
 - **Autonomy & Safety Boundaries**:
   - **Mode A (Passive)**: Ask permission before mutating files, running shell commands, or installing dependencies.
   - **Mode B (Supervised)**: Ordinary dev dependencies allowed; ask before OS-level changes or \`sudo\`.
@@ -400,6 +400,9 @@ export class AgentLoop {
         this.modelOverride = typeof options.model === 'string' && options.model.trim()
             ? options.model.trim()
             : null;
+        this.variantOverride = typeof options.variant === 'string' && options.variant.trim()
+            ? options.variant.trim().toLowerCase()
+            : null;
         this.approvalScope = options.approvalScope && typeof options.approvalScope.isAlwaysAllowed === 'function'
             ? options.approvalScope
             : processApprovalScope;
@@ -408,6 +411,9 @@ export class AgentLoop {
             : [];
         this.config = loadConfig();
         applyProviderOverrides(this.config, this.providerOverride, this.modelOverride);
+        if (this.variantOverride) {
+            this.config.reasoningEffort = this.variantOverride;
+        }
         this.sandbox = new Sandbox({ workspaceRoot: this.workspaceRoot });
         // Retire spilled tool outputs past their retention window. Fire-and-forget
         // at task start rather than on a timer: nothing may run in the background
@@ -1571,6 +1577,9 @@ export class AgentLoop {
         if (this.autonomyOverride)
             this.config.autonomyMode = this.autonomyOverride;
         applyProviderOverrides(this.config, this.providerOverride, this.modelOverride);
+        if (this.variantOverride) {
+            this.config.reasoningEffort = this.variantOverride;
+        }
         if (typeof this.initializeProvider === 'function') {
             const nextProvider = this.initializeProvider();
             if (nextProvider) {
@@ -2426,7 +2435,8 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     effectivePeerMcpServers.push({
                         name: 'causyne-browser',
                         command: process.execPath,
-                        args: [CAUSYNE_CLI_BIN_PATH, 'browser-mcp', '--workspace', this.workspaceRoot]
+                        args: [CAUSYNE_CLI_BIN_PATH, 'browser-mcp', '--workspace', this.workspaceRoot],
+                        env: []
                     });
                 }
                 const hasBrowserMcpAttached = effectivePeerMcpServers.some((srv) => srv?.name === 'causyne-browser');

@@ -16,7 +16,7 @@ import { resolveCharPool } from './contextManager.js';
 import { PRIMARY_ACTIONS, homeStatusLine, moreLayer, configureInPrompt, mcpPicker, PROVIDERS } from './tui/home.js';
 import { commandDialog } from './tui/commandPresentation.js';
 import { HomeTransition } from './tui/homeTransition.js';
-import { openModeControl, openVariantControl } from './tui/composerControls.js';
+import { openModeControl, openVariantControl, cycleModeControl, cycleVariantControl } from './tui/composerControls.js';
 import { runInteractiveModelPicker } from './tui/modelPicker.js';
 import { askSelect, askText, askConfirm, askDecision } from './tui/ask.js';
 import { renderReport } from './reporting.js';
@@ -25,10 +25,11 @@ import { auditLog } from './auditLog.js';
 import { isAcpProvider } from './providers/acp.js';
 import { isPiProvider } from './providers/pi.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
-import { runHeadlessTask, parsePermissionMode, parseMaxTurns } from './headlessCli.js';
+import { runHeadlessTask, parsePermissionMode, parseMaxTurns, parseVariantOption } from './headlessCli.js';
 import { closeAll as closeAllMcpServers, setActiveWorkspace as setActiveMcpWorkspace } from './mcp/mcpRegistry.js';
 import { lspSessionManager } from './lsp/lspClient.js';
 import { backgroundTaskManager } from './backgroundTasks.js';
+import { stopGuiServer } from './web/guiLauncher.js';
 let cliTaskSequence = 0;
 function nextCliTaskId(prefix) {
     cliTaskSequence += 1;
@@ -168,8 +169,10 @@ async function runHomeAction(action, { prompt, conn, finish, loop }) {
                 const wrapped = wrapBlock(result.output, conn.renderer.width()).join('\n');
                 conn.renderer.write('\n' + (result.ok ? wrapped : paint('danger', wrapped)) + '\n');
             }
-            if (action.id === 'model' || action.id === 'continuum' || action.id === 'sessions') {
-                conn.renderer.write(homeStatusLine({ config: loadConfig() }) + '\n');
+            if (action.id === 'model' || action.id === 'continuum' || action.id === 'sessions' || action.id === 'gui') {
+                if (action.id !== 'gui') {
+                    conn.renderer.write(homeStatusLine({ config: loadConfig() }) + '\n');
+                }
                 return null;
             }
             reopen();
@@ -235,6 +238,9 @@ export async function runTask(task, options = {}) {
         loopOptions.provider = options.provider;
     if (options?.model)
         loopOptions.model = options.model;
+    const parsedVariant = parseVariantOption(options?.variant);
+    if (parsedVariant)
+        loopOptions.variant = parsedVariant;
     const loop = new AgentLoop(conn, taskId, task, loopOptions);
     const permMode = parsePermissionMode(options?.permissionMode);
     if (permMode)
@@ -244,7 +250,35 @@ export async function runTask(task, options = {}) {
         loop.maxStepsCeiling = maxTurns;
     loop.waitForApproval = makeApprovalHandler(conn);
     loop.waitForDecision = makeDecisionHandler(conn);
-    await loop.run();
+    let signalCode = null;
+    const onSigInt = () => { signalCode = 130; loop.abort?.(); };
+    const onSigTerm = () => { signalCode = 143; loop.abort?.(); };
+    process.once('SIGINT', onSigInt);
+    process.once('SIGTERM', onSigTerm);
+    try {
+        await loop.run();
+    }
+    finally {
+        process.removeListener('SIGINT', onSigInt);
+        process.removeListener('SIGTERM', onSigTerm);
+        await Promise.race([
+            Promise.allSettled([
+                Promise.resolve().then(() => stopGuiServer()),
+                Promise.resolve().then(() => loop?.llm?.close?.()),
+                Promise.resolve().then(() => closeAllMcpServers()),
+                Promise.resolve().then(() => lspSessionManager.shutdownAll()),
+                Promise.resolve().then(() => backgroundTaskManager.stopAll())
+            ]),
+            new Promise((resolve) => {
+                const timer = setTimeout(resolve, 3000);
+                timer.unref?.();
+            })
+        ]);
+    }
+    if (signalCode !== null) {
+        process.exitCode = signalCode;
+        return;
+    }
     const completed = loop._causyneTaskOutcome === 'completed';
     if (completed) {
         console.log(`\n${paint('success', '[DONE]')} Task completed and verified.\n`);
@@ -258,12 +292,26 @@ export async function chatMode(options) {
     const home = Boolean(options && typeof options === 'object' && options.home);
     const conn = new LocalCLIConnection();
     const taskId = nextCliTaskId('cli_chat');
-    let loop = new AgentLoop(conn, taskId, null);
-    const config = loadConfig();
+    const loopOptions = {};
+    if (options?.provider)
+        loopOptions.provider = options.provider;
+    if (options?.model)
+        loopOptions.model = options.model;
+    const parsedVariant = parseVariantOption(options?.variant);
+    if (parsedVariant)
+        loopOptions.variant = parsedVariant;
+    let loop = new AgentLoop(conn, taskId, null, loopOptions);
+    const permMode = parsePermissionMode(options?.permissionMode);
+    if (permMode) {
+        loop.autonomyOverride = permMode;
+        loop.updateTierLimits();
+    }
+    const config = loop.config || loadConfig();
     const headerInfo = {
         version: `v${getPackageVersion()}`,
         provider: config.provider,
         model: config.model,
+        variant: typeof config.reasoningEffort === 'string' ? config.reasoningEffort : '',
         autonomyMode: config.autonomyMode,
         tier: config.tier,
         workspace: loop.sandbox && loop.sandbox.grantAllAccess
@@ -287,6 +335,25 @@ export async function chatMode(options) {
     const homeTransition = new HomeTransition(openedHome, surface);
     loop.waitForApproval = makeApprovalHandler(conn);
     loop.waitForDecision = makeDecisionHandler(conn);
+    let cleanupPromise = null;
+    const cleanupSessionResources = () => {
+        if (cleanupPromise)
+            return cleanupPromise;
+        cleanupPromise = Promise.race([
+            Promise.allSettled([
+                Promise.resolve().then(() => stopGuiServer()),
+                Promise.resolve().then(() => loop?.llm?.close?.()),
+                Promise.resolve().then(() => closeAllMcpServers()),
+                Promise.resolve().then(() => lspSessionManager.shutdownAll()),
+                Promise.resolve().then(() => backgroundTaskManager.stopAll())
+            ]).then(() => undefined),
+            new Promise((resolve) => {
+                const timer = setTimeout(resolve, 3000);
+                timer.unref?.();
+            })
+        ]);
+        return cleanupPromise;
+    };
     let prompt = null;
     if (isInteractive()) {
         try {
@@ -308,16 +375,27 @@ export async function chatMode(options) {
                     await openModeControl(prompt, loop);
                     prompt?.refreshPinnedPanels?.(loop);
                 },
+                onCycleMode: async () => {
+                    await cycleModeControl(prompt, loop);
+                    prompt?.refreshPinnedPanels?.(loop);
+                },
                 onOpenModel: async () => {
                     await runInteractiveModelPicker(prompt, { loadConfig, saveConfig }, { loop });
                     prompt?.refreshPinnedPanels?.(loop);
                 },
                 onOpenVariant: async () => {
-                    await openVariantControl(prompt);
+                    await cycleVariantControl(prompt, loop);
                     prompt?.refreshPinnedPanels?.(loop);
                 },
-                onExit: () => { if (prompt)
-                    prompt.stop(); process.exit(0); },
+                onOpenVariantList: async () => {
+                    await openVariantControl(prompt, loop);
+                    prompt?.refreshPinnedPanels?.(loop);
+                },
+                onExit: () => {
+                    if (prompt)
+                        prompt.stop();
+                    void cleanupSessionResources().finally(() => process.exit(0));
+                },
                 onExpand: () => conn.renderer.expandLastOutput()
             });
             conn.onUsageUpdate = () => {
@@ -359,24 +437,6 @@ export async function chatMode(options) {
         if (prompt)
             return prompt.read();
         return askText({ title: 'You' });
-    };
-    const cleanupSessionResources = async () => {
-        try {
-            await loop?.llm?.close?.();
-        }
-        catch { /* ignore */ }
-        try {
-            await closeAllMcpServers();
-        }
-        catch { /* ignore */ }
-        try {
-            await lspSessionManager.shutdownAll();
-        }
-        catch { /* ignore */ }
-        try {
-            backgroundTaskManager.stopAll();
-        }
-        catch { /* ignore */ }
     };
     setActiveMcpWorkspace(loop.workspaceRoot || process.cwd());
     const finish = () => { if (prompt)

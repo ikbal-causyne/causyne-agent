@@ -18,22 +18,19 @@ process.once('exit', restoreTerminal);
 
 function shouldSkipAutoUpdateCheck(argv) {
   const tokens = Array.isArray(argv) ? argv.slice(2) : [];
+  const skipTokens = new Set([
+    'acp', 'web', 'gui', 'studio', 'browser-mcp',
+    'status', 'doctor', 'diff', 'license',
+    'context', 'usage', 'checkpoints', 'undo', 'mcp', 'peers',
+    'policy', 'audit', 'lsp', 'worktree', 'pr', 'rules', 'map',
+    'eval', 'continuum', 'resume', 'exec', 'run', 'config', 'setup', 'update',
+    '-p', '--print', '--output-format',
+    '-v', '-V', '--version', '-h', '--help'
+  ]);
   for (const raw of tokens) {
     const token = String(raw);
     if (token === '--') break;
-    if (
-      token === 'acp'
-      || token === 'web'
-      || token === 'browser-mcp'
-      || token === '-p'
-      || token === '--print'
-      || token === '--output-format'
-      || token.startsWith('--output-format=')
-      || token === '-V'
-      || token === '--version'
-      || token === '-h'
-      || token === '--help'
-    ) {
+    if (skipTokens.has(token) || token.startsWith('--output-format=')) {
       return true;
     }
   }

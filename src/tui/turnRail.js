@@ -177,11 +177,14 @@ export function sliceFromColumn(source, startCol) {
 }
 /**
  * Build the vertical column of turn rail cells.
- * Matches the canonical Turn Rail UX from Screen Recording 2026-10-30 at 02.42.17:
- * - Consecutive vertical pillar when turns fit within viewport height.
- * - Proportional scaling when turn count exceeds available height.
+ * Always vertically centered in the viewport — never pinned beside individual
+ * message rows or shifted by short transcript topOffset:
+ * - Compact vertical pillar centered at `Math.floor((safeHeight - count) / 2)`
+ *   when turns fit comfortably (`count <= min(safeHeight, 20)`).
+ * - Centered proportional vertical track with subtle muted `^` / `v` overflow
+ *   indicators when turn count exceeds the compact pillar height.
  */
-export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIndex, scrollTop) {
+export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIndex, _scrollTop) {
     const safeHeight = Number.isFinite(height) ? Math.max(0, Math.floor(height)) : 0;
     const cells = new Array(safeHeight).fill(' ');
     const dotRows = new Map();
@@ -190,63 +193,33 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         return { cells, layout: { dotRows, rowToTurn } };
     }
     const count = turns.length;
-    const rawTranscriptHeight = turns[0]?.transcriptHeight;
-    const hasTranscriptHeight = typeof rawTranscriptHeight === 'number' &&
-        Number.isFinite(rawTranscriptHeight) &&
-        rawTranscriptHeight > 0;
-    const topOffset = hasTranscriptHeight && rawTranscriptHeight < safeHeight
-        ? safeHeight - Math.floor(rawTranscriptHeight)
-        : 0;
-    const activeHeight = Math.max(1, safeHeight - topOffset);
-    // Dense imported histories may contain hundreds of turns. Show a measured
-    // set of quiet milestones, while always retaining active/hovered endpoints.
-    // All turn objects are preserved for keyboard navigation and preview.
-    const quietStep = count > Math.max(16, Math.floor(activeHeight / 2))
-        ? Math.max(2, Math.ceil(count / Math.max(12, Math.floor(activeHeight / 3))))
-        : 1;
-    // If count fits comfortably, stack consecutive dots centered or upper-aligned
-    const startRow = count <= activeHeight
-        ? topOffset + Math.max(0, Math.floor((activeHeight - count) / 3))
-        : topOffset;
+    const maxCompactDots = Math.min(safeHeight, 20);
+    const compactMode = count <= maxCompactDots;
+    const railSpan = compactMode
+        ? count
+        : (safeHeight >= 6
+            ? Math.min(20, Math.max(4, Math.floor(safeHeight * 0.72)))
+            : safeHeight);
+    const startRow = Math.max(0, Math.floor((safeHeight - railSpan) / 2));
     for (let i = 0; i < count; i++) {
         const turn = turns[i];
         if (!turn)
             continue;
         const turnNum = turn.turnIndex;
         let rowIdx;
-        if (count === 1 && hasTranscriptHeight) {
-            const rawAnchor = Number.isFinite(turn.promptRow) ? turn.promptRow : turn.startRow;
-            const anchorRow = Number.isFinite(rawAnchor) ? Math.max(0, Math.floor(rawAnchor)) : 0;
-            if (topOffset > 0) {
-                rowIdx = topOffset + anchorRow;
-            }
-            else if (typeof scrollTop === 'number' && Number.isFinite(scrollTop)) {
-                const safeScrollTop = Math.max(0, Math.floor(scrollTop));
-                if (anchorRow >= safeScrollTop && anchorRow < safeScrollTop + safeHeight) {
-                    rowIdx = anchorRow - safeScrollTop;
-                }
-                else if (anchorRow < safeScrollTop) {
-                    rowIdx = 0;
-                }
-                else {
-                    rowIdx = safeHeight - 1;
-                }
-            }
-            else {
-                rowIdx = Math.round((anchorRow / Math.max(1, Math.floor(rawTranscriptHeight) - 1)) * (safeHeight - 1));
-            }
-        }
-        else if (count <= activeHeight) {
+        if (compactMode) {
             rowIdx = startRow + i;
         }
-        else {
-            rowIdx = topOffset + Math.round((i / (count - 1)) * (activeHeight - 1));
+        else if (railSpan <= 1) {
+            rowIdx = startRow;
         }
-        rowIdx = Math.max(topOffset, Math.min(safeHeight - 1, rowIdx));
+        else {
+            rowIdx = startRow + Math.round((i / (count - 1)) * (railSpan - 1));
+        }
+        rowIdx = Math.max(0, Math.min(safeHeight - 1, rowIdx));
         dotRows.set(turnNum, rowIdx);
         const isHovered = hoveredTurnIndex === turnNum;
         const isActive = activeTurnIndex === turnNum;
-        const showQuiet = quietStep === 1 || i === 0 || i === count - 1 || i % quietStep === 0;
         const rowHasHovered = cells[rowIdx]?.includes('230;235;245m');
         const rowHasDot = cells[rowIdx]?.includes('●');
         if (isHovered) {
@@ -259,12 +232,23 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
             cells[rowIdx] = '\x1b[1m\x1b[38;2;250;250;250m●\x1b[0m';
             rowToTurn.set(rowIdx, turnNum);
         }
-        else if (showQuiet && !rowHasDot) {
-            // Muted inactive turns: sparse gray dot in long sessions
+        else if (!rowHasDot) {
+            // Muted inactive turn dot
             cells[rowIdx] = '\x1b[38;2;115;115;120m•\x1b[0m';
             if (!rowToTurn.has(rowIdx)) {
                 rowToTurn.set(rowIdx, turnNum);
             }
+        }
+    }
+    // Subtle top/bottom continuation chevrons for compressed multi-turn tracks
+    if (!compactMode && count > railSpan) {
+        const firstTurnNum = turns[0]?.turnIndex ?? 1;
+        const lastTurnNum = turns[count - 1]?.turnIndex ?? count;
+        if (startRow - 1 >= 0 && activeTurnIndex > firstTurnNum) {
+            cells[startRow - 1] = '\x1b[38;2;95;95;102m^\x1b[0m';
+        }
+        if (startRow + railSpan < safeHeight && activeTurnIndex < lastTurnNum) {
+            cells[startRow + railSpan] = '\x1b[38;2;95;95;102mv\x1b[0m';
         }
     }
     return { cells, layout: { dotRows, rowToTurn } };
@@ -442,7 +426,7 @@ export function overlayTurnPreviewCard(viewportRows, cardRows, anchorY, railX, s
         if (x <= 6 && safeRailX <= 4 && x > safeRailX) {
             const plainBase = stripAnsi(baseRow);
             const dotChar = plainBase[safeRailX] || ' ';
-            const isDot = dotChar === '●' || dotChar === '•' || dotChar === '·';
+            const isDot = dotChar === '●' || dotChar === '•' || dotChar === '·' || dotChar === '^' || dotChar === 'v';
             let dotCell = ' ';
             if (isDot) {
                 if (dotChar === '●') {
@@ -452,6 +436,9 @@ export function overlayTurnPreviewCard(viewportRows, cardRows, anchorY, railX, s
                 }
                 else if (dotChar === '•') {
                     dotCell = '\x1b[38;2;115;115;120m•\x1b[0m';
+                }
+                else if (dotChar === '^' || dotChar === 'v') {
+                    dotCell = `\x1b[38;2;95;95;102m${dotChar}\x1b[0m`;
                 }
                 else {
                     dotCell = dotChar;

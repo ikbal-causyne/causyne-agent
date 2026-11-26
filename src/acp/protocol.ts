@@ -233,6 +233,18 @@ export interface AcpDiscoveredSessionModels {
   configOptionId?: string | undefined;
 }
 
+export interface AcpDiscoveredVariantChoice {
+  value: string;
+  name?: string | undefined;
+  description?: string | undefined;
+}
+
+export interface AcpDiscoveredVariantOption {
+  configOptionId: string;
+  currentValue?: string | undefined;
+  options: AcpDiscoveredVariantChoice[];
+}
+
 export interface McpServerHeader {
   name: string;
   value: string;
@@ -246,6 +258,73 @@ export interface McpServer {
   url?: string;
   type?: string;
   headers?: McpServerHeader[];
+}
+
+function normalizeAcpKvPairs(raw: unknown): Array<{ name: string; value: string }> {
+  if (Array.isArray(raw)) {
+    const pairs: Array<{ name: string; value: string }> = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const obj = item as Record<string, unknown>;
+      if (typeof obj.name === 'string' && obj.name.length > 0 && typeof obj.value === 'string') {
+        pairs.push({ name: obj.name, value: obj.value });
+      }
+    }
+    return pairs;
+  }
+  if (raw && typeof raw === 'object') {
+    const pairs: Array<{ name: string; value: string }> = [];
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (k.length > 0 && typeof v === 'string') {
+        pairs.push({ name: k, value: v });
+      }
+    }
+    return pairs;
+  }
+  return [];
+}
+
+/**
+ * Normalize MCP server descriptors to strictly match the published ACP JSON-RPC schema
+ * (`McpServerHttp | McpServerSse | McpServerStdio`).
+ *
+ * ACP peers using Zod validation (such as OpenCode) reject stdio MCP servers when
+ * `env` or `args` is omitted/undefined, and reject http/sse entries when `headers`
+ * is omitted. Preserves all server entries and credentials without degrading capabilities.
+ */
+export function normalizeAcpMcpServers(rawServers: readonly unknown[] | undefined): McpServer[] {
+  if (!Array.isArray(rawServers) || rawServers.length === 0) return [];
+  const normalized: McpServer[] = [];
+  for (const entry of rawServers) {
+    if (!entry || typeof entry !== 'object') continue;
+    const raw = entry as Record<string, unknown>;
+    const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+    if (!name) continue;
+
+    const rawType = typeof raw.type === 'string' ? raw.type.trim().toLowerCase() : '';
+    if ((rawType === 'http' || rawType === 'sse') && typeof raw.url === 'string' && raw.url.trim()) {
+      normalized.push({
+        type: rawType,
+        name,
+        url: raw.url.trim(),
+        headers: normalizeAcpKvPairs(raw.headers)
+      });
+      continue;
+    }
+
+    if (typeof raw.command === 'string' && raw.command.trim()) {
+      const args = Array.isArray(raw.args)
+        ? raw.args.filter((a): a is string => typeof a === 'string')
+        : [];
+      normalized.push({
+        name,
+        command: raw.command.trim(),
+        args,
+        env: normalizeAcpKvPairs(raw.env)
+      });
+    }
+  }
+  return normalized;
 }
 
 export interface NewSessionRequest {
@@ -681,4 +760,69 @@ export function extractAcpSessionModels(payload: unknown): AcpDiscoveredSessionM
     usesConfigOption,
     configOptionId
   };
+}
+
+/**
+ * Extract live reasoning / thinking / effort configOption advertised by an ACP peer
+ * in session/new, session/load, session/set_config_option, or session/update.
+ */
+export function extractAcpSessionVariants(payload: unknown): AcpDiscoveredVariantOption | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const record = payload as Record<string, unknown>;
+  const configOptions = Array.isArray(record.configOptions) ? record.configOptions : [];
+  const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+  const VARIANT_ID_RE = /^(?:thought[_-]?level|reasoning[_-]?effort|reasoning|effort|thinking[_-]?level|thinking[_-]?effort|thinking|variant)$/;
+
+  for (const rawOpt of configOptions) {
+    if (!rawOpt || typeof rawOpt !== 'object') continue;
+    const opt = rawOpt as Record<string, unknown>;
+    const rawId = typeof opt.id === 'string' ? opt.id.trim() : '';
+    const optIdLower = rawId.toLowerCase();
+    const optCategory = typeof opt.category === 'string' ? opt.category.trim().toLowerCase() : '';
+    if (!rawId || rawId.length > 100 || FORBIDDEN_KEYS.has(rawId)) continue;
+    const matchesCategory = optCategory === 'thought_level' || optCategory === 'reasoning' || optCategory === 'reasoning_effort';
+    if (!matchesCategory && !VARIANT_ID_RE.test(optIdLower)) continue;
+
+    const choices: AcpDiscoveredVariantChoice[] = [];
+    const seen = new Set<string>();
+    const pushChoice = (val: unknown, name?: unknown, desc?: unknown): void => {
+      if (typeof val !== 'string') return;
+      const clean = val.trim();
+      if (!clean || clean.length > 80 || FORBIDDEN_KEYS.has(clean) || seen.has(clean)) return;
+      seen.add(clean);
+      choices.push({
+        value: clean,
+        ...(typeof name === 'string' && name.trim() ? { name: name.trim().slice(0, 120) } : {}),
+        ...(typeof desc === 'string' && desc.trim() ? { description: desc.trim().slice(0, 200) } : {})
+      });
+    };
+
+    const rawEntries = Array.isArray(opt.options) ? opt.options : [];
+    for (const entry of rawEntries) {
+      if (!entry || typeof entry !== 'object') continue;
+      const entryObj = entry as Record<string, unknown>;
+      if (Array.isArray(entryObj.options)) {
+        for (const sub of entryObj.options) {
+          if (sub && typeof sub === 'object') {
+            const subObj = sub as Record<string, unknown>;
+            pushChoice(subObj.value ?? subObj.id, subObj.name ?? subObj.label, subObj.description);
+          }
+        }
+      } else {
+        pushChoice(entryObj.value ?? entryObj.id, entryObj.name ?? entryObj.label, entryObj.description);
+      }
+    }
+
+    const currentValue = typeof opt.currentValue === 'string' && opt.currentValue.trim() && opt.currentValue.length <= 80
+      ? opt.currentValue.trim()
+      : undefined;
+    if (choices.length > 0 || currentValue) {
+      return {
+        configOptionId: rawId,
+        ...(currentValue ? { currentValue } : {}),
+        options: choices
+      };
+    }
+  }
+  return null;
 }

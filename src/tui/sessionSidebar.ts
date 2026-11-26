@@ -15,6 +15,7 @@ export interface SidebarFacts {
   cwd?: string;
   provider?: string;
   model?: string;
+  variant?: string;
   contextChars?: number;
   contextLimit?: number;
   plan?: Array<{ text?: string; step?: string; content?: string; status?: string }>;
@@ -92,6 +93,9 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number, width: n
     line(safeFacts.model);
   } else {
     line([safeFacts.provider, safeFacts.model].filter(Boolean).join(' / ') || 'Not configured');
+  }
+  if (safeFacts.variant) {
+    styled(paint('accent', `Variant · ${oneLine(safeFacts.variant)}`));
   }
   line();
   styled(bold('Workspace'));

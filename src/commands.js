@@ -15,7 +15,7 @@ import { readCompiledSkill, listCompiledSkills, invalidateUserSkills, userSkillP
 import { userSkillsRoot, parseSkillId, writeUserSkill, deleteUserSkill, skillTemplate } from './userSkills.js';
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
-import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview, resolveAvailableProvidersOverview, pickDefaultPeerModel } from './dynamicCatalogue.js';
+import { resolveAvailableModels, getCuratedModels, getLiveAntigravityModels, getModelVariantsForPeer, getAvailableProvidersOverview, resolveAvailableProvidersOverview, pickDefaultPeerModel } from './dynamicCatalogue.js';
 import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
 import { formatRedactedProviderErrorReport, getRecentProviderDiagnostics } from './providers/byokHttp.js';
@@ -59,6 +59,8 @@ import { formatEvalScorecard, runCodingEvalSuite } from './benchmarks/codingEval
 import { formatProjectRulesReport } from './projectInstructions.js';
 import { buildRepoMap } from './codebase/repoMap.js';
 import { backgroundTaskManager } from './backgroundTasks.js';
+import { resolveModelVariants, matchVariantOption, normalizeVariantToken } from './modelVariants.js';
+import { launchGuiServer, getGuiServerStatus, stopGuiServer } from './web/guiLauncher.js';
 export const SCOPES = ['local'];
 function ok(output, extra = {}) {
     return { ok: true, output, ...extra };
@@ -95,6 +97,155 @@ async function resetStandingApprovals(context) {
         context.loop.resetApprovalScope();
     }
 }
+function resolveActiveVariantSpec(config, ctx = {}) {
+    const provider = String(config.provider || '').trim();
+    const model = String(config.model || '').trim();
+    const liveAcpVariant = typeof ctx.loop?.llm?.getLiveVariantOption === 'function'
+        ? ctx.loop.llm.getLiveVariantOption()
+        : null;
+    let ollamaSupportsThinking = null;
+    if (provider.toLowerCase() === 'ollama' && ctx.loop?.llm) {
+        const metaCache = ctx.loop.llm._modelMetaCache;
+        const cachedMeta = metaCache?.get(model);
+        if (cachedMeta && typeof cachedMeta.supportsThinking === 'boolean') {
+            ollamaSupportsThinking = cachedMeta.supportsThinking;
+        }
+    }
+    const providerLower = provider.toLowerCase();
+    const liveAgyModels = (providerLower.includes('antigravity') || providerLower === 'agy')
+        ? getLiveAntigravityModels(config)
+        : undefined;
+    const peerModelVariants = isAcpProvider(provider)
+        ? getModelVariantsForPeer(provider, model, config)
+        : undefined;
+    return resolveModelVariants({
+        provider,
+        model,
+        currentVariant: typeof config.reasoningEffort === 'string' ? config.reasoningEffort : null,
+        liveAcpVariant,
+        peerModelVariants,
+        ollamaSupportsThinking,
+        availableAgyModels: liveAgyModels && liveAgyModels.length > 0 ? liveAgyModels : undefined
+    });
+}
+function formatVariantStatusReport(spec) {
+    const sourceLabels = {
+        acp_live: 'ACP peer live configOptions',
+        peer_catalogue: 'ACP peer published catalogue',
+        agy_models: 'Antigravity live sibling models',
+        ollama_live: 'Ollama local capabilities',
+        model_family: 'Model capability registry',
+        none: 'Not tunable'
+    };
+    const lines = [
+        `Provider        : ${safeDisplay(spec.provider || 'none')}`,
+        `Model           : ${safeDisplay(spec.model || 'none')}`,
+        `Detection       : ${sourceLabels[spec.source]}`,
+        `Active Variant  : ${safeDisplay(spec.currentVariant || (spec.defaultVariant ? `auto (${spec.defaultVariant})` : 'default'))}`
+    ];
+    if (spec.supported && spec.options.length > 0) {
+        lines.push('');
+        lines.push('Supported Variants:');
+        for (const opt of spec.options) {
+            const isActive = Boolean(spec.currentVariant && opt.id.toLowerCase() === spec.currentVariant.toLowerCase());
+            const marker = isActive ? '●' : '○';
+            lines.push(`  ${marker} ${safeDisplay(opt.id).padEnd(10)} ${safeDisplay(opt.label)} — ${safeDisplay(opt.description)}`);
+        }
+        lines.push('');
+        lines.push('Usage: /variant <level> | /variant auto');
+        if (spec.note)
+            lines.push(`Note: ${safeDisplay(spec.note)}`);
+    }
+    else {
+        lines.push('');
+        lines.push(`Info: ${safeDisplay(spec.note)}`);
+    }
+    return lines.join('\n');
+}
+async function applySelectedVariant(rawChoice, spec, config, ctx = {}) {
+    const norm = normalizeVariantToken(rawChoice);
+    if (norm === 'auto') {
+        delete config.reasoningEffort;
+        delete config.reasoningBudgetTokens;
+        saveConfig(config);
+        const liveAcp = typeof ctx.loop?.llm?.getLiveVariantOption === 'function'
+            ? ctx.loop.llm.getLiveVariantOption()
+            : null;
+        if (liveAcp
+            && Array.isArray(liveAcp.options)
+            && liveAcp.options.some((opt) => String(opt?.value || '').toLowerCase() === 'default')
+            && typeof ctx.loop?.llm?.applyVariant === 'function') {
+            await ctx.loop.llm.applyVariant('default', liveAcp.configOptionId || spec.acpConfigId);
+        }
+        if (ctx.loop) {
+            ctx.loop.config = loadConfig();
+            if (typeof ctx.loop.updateTierLimits === 'function') {
+                ctx.loop.updateTierLimits();
+            }
+        }
+        if (ctx.prompt) {
+            if (typeof ctx.prompt.updateModel === 'function') {
+                ctx.prompt.updateModel(config.provider || spec.provider, config.model || spec.model, '');
+            }
+            else {
+                ctx.prompt.renderer?.status?.setSession?.({ variant: '' });
+                ctx.prompt.surface?.setSessionInfo?.({ variant: '' });
+                ctx.prompt.scheduleDraw?.();
+            }
+        }
+        return ok(`Reasoning variant reset to model default${spec.defaultVariant ? ` (${safeDisplay(spec.defaultVariant)})` : ''} for ${safeDisplay(spec.provider)} / ${safeDisplay(spec.model)}.`, { effect: 'inline' });
+    }
+    if (!spec.supported || spec.options.length === 0) {
+        return fail(`${safeDisplay(spec.provider || 'Active provider')} / ${safeDisplay(spec.model || 'active model')} does not expose tunable reasoning variants.\n${safeDisplay(spec.note)}`);
+    }
+    const matched = matchVariantOption(spec, rawChoice);
+    if (!matched) {
+        const allowed = spec.options.map((o) => o.id).join(', ');
+        return fail(`Variant "${safeDisplay(rawChoice)}" is not supported by ${safeDisplay(spec.model || spec.provider)}.\nSupported variants: ${allowed}, auto`);
+    }
+    config.reasoningEffort = matched.id;
+    const modelChanged = Boolean(matched.targetModelId && matched.targetModelId !== config.model);
+    if (matched.targetModelId) {
+        config.model = matched.targetModelId;
+    }
+    saveConfig(config);
+    let liveSynced = false;
+    if (typeof ctx.loop?.llm?.applyVariant === 'function' && !modelChanged) {
+        liveSynced = Boolean(await ctx.loop.llm.applyVariant(matched.id, matched.acpConfigId));
+        if (ctx.loop) {
+            ctx.loop.config = loadConfig();
+        }
+    }
+    else if (ctx.loop) {
+        ctx.loop.config = loadConfig();
+        if (typeof ctx.loop.updateTierLimits === 'function') {
+            ctx.loop.updateTierLimits();
+        }
+    }
+    if (ctx.prompt) {
+        if (typeof ctx.prompt.updateModel === 'function') {
+            ctx.prompt.updateModel(config.provider || spec.provider, config.model || spec.model, matched.id);
+        }
+        else if (ctx.prompt.renderer?.status) {
+            ctx.prompt.renderer.status.setSession({
+                provider: config.provider || spec.provider,
+                model: config.model || spec.model,
+                variant: matched.id
+            });
+            ctx.prompt.surface?.setSessionInfo?.({
+                provider: config.provider || spec.provider,
+                model: config.model || spec.model,
+                variant: matched.id
+            });
+            if (typeof ctx.prompt.scheduleDraw === 'function')
+                ctx.prompt.scheduleDraw();
+        }
+    }
+    const syncNote = liveSynced
+        ? ' (applied live to active ACP session)'
+        : (modelChanged ? ` (switched model to ${safeDisplay(config.model)})` : '');
+    return ok(`Variant set to ${safeDisplay(matched.label)} (${safeDisplay(matched.id)}) for ${safeDisplay(spec.provider)} / ${safeDisplay(config.model || spec.model)}${syncNote}.`, { effect: 'inline' });
+}
 // ---------------------------------------------------------------------------
 // The table
 // ---------------------------------------------------------------------------
@@ -107,6 +258,33 @@ export const COMMANDS = [
                 return ok('Run causyne setup in an interactive terminal.');
             const { configureInPrompt } = await import('./tui/home.js');
             const result = await configureInPrompt(ctx.prompt, { loadConfig, saveConfig });
+            if (result) {
+                const fresh = loadConfig();
+                if (ctx.loop) {
+                    ctx.loop.config = fresh;
+                    if (typeof ctx.loop.updateTierLimits === 'function') {
+                        ctx.loop.updateTierLimits();
+                    }
+                }
+                const nextVariant = typeof fresh.reasoningEffort === 'string' ? fresh.reasoningEffort : '';
+                if (typeof ctx.prompt.updateModel === 'function') {
+                    ctx.prompt.updateModel(fresh.provider || result.provider, fresh.model || result.model, nextVariant);
+                }
+                else {
+                    ctx.prompt.renderer?.status?.setSession?.({
+                        provider: fresh.provider || result.provider,
+                        model: fresh.model || result.model,
+                        variant: nextVariant
+                    });
+                    ctx.prompt.surface?.setSessionInfo?.({
+                        provider: fresh.provider || result.provider,
+                        model: fresh.model || result.model,
+                        variant: nextVariant,
+                        autonomyMode: fresh.autonomyMode
+                    });
+                    ctx.prompt.scheduleDraw?.();
+                }
+            }
             return ok(result ? `Saved ${result.provider} / ${result.model}. Connection has not been tested.` : 'Cancelled. Nothing was changed.');
         }
     },
@@ -498,8 +676,24 @@ export const COMMANDS = [
             });
             if (!succeeded)
                 return fail(text);
-            if (apply)
+            if (apply) {
+                if (ctx.loop?.memoryManager && typeof ctx.loop.memoryManager.loadHistory === 'function') {
+                    const rewoundMessages = ctx.loop.memoryManager.loadHistory();
+                    ctx.loop.messages = rewoundMessages;
+                    const renderer = ctx.prompt?.renderer || ctx.loop?.connection?.renderer;
+                    if (renderer && typeof renderer.renderSessionHistory === 'function') {
+                        renderer.renderSessionHistory(rewoundMessages, {
+                            id: ctx.loop.memoryManager.sessionId,
+                            title: ctx.loop.memoryManager.sessionTitle || 'Session',
+                            messagesCount: rewoundMessages.length
+                        });
+                    }
+                    if (ctx.prompt?.surface?.viewport && typeof ctx.prompt.surface.viewport.toBottom === 'function') {
+                        ctx.prompt.surface.viewport.toBottom();
+                    }
+                }
                 return ok(text, { effect: 'inline' });
+            }
             return ok(`${text}\n\nNothing was written. Run the same command with --apply to restore these files.`);
         }
     },
@@ -1034,6 +1228,116 @@ export const COMMANDS = [
         }
     },
     {
+        name: 'cortex',
+        aliases: ['memory'],
+        scope: 'local',
+        usage: '/cortex [status | list | search <query> | on | off | forget <id|--workspace>]',
+        description: 'Inspect, search, toggle, or clear persistent Cortex memory',
+        dialogTitle: 'Cortex Memory',
+        complete: () => [
+            { value: 'status', label: 'status', description: 'show Cortex memory counts and engine status' },
+            { value: 'list', label: 'list', description: 'list recent memories stored for this workspace' },
+            { value: 'search', label: 'search', description: 'semantic search across stored memories' },
+            { value: 'on', label: 'on', description: 'enable persistent Cortex memory recall' },
+            { value: 'off', label: 'off', description: 'disable persistent Cortex memory recall' },
+            { value: 'forget --workspace', label: 'forget --workspace', description: 'clear memories for the current workspace' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const sub = String(argv[0] || 'status').trim().toLowerCase();
+            const workspace = ctx.loop?.workspaceRoot || process.cwd();
+            if (sub === 'on' || sub === 'enable' || sub === 'off' || sub === 'disable') {
+                const enabled = sub === 'on' || sub === 'enable';
+                const config = loadConfig();
+                const prev = config.cortex && typeof config.cortex === 'object' ? config.cortex : {};
+                config.cortex = { ...prev, enabled };
+                saveConfig(config);
+                if (ctx.loop) {
+                    ctx.loop.config = loadConfig();
+                }
+                return ok(`Cortex persistent memory is now ${enabled ? 'ENABLED' : 'DISABLED'}.`, { effect: 'inline' });
+            }
+            const config = loadConfig();
+            const enabled = config.cortex?.enabled !== false;
+            let cortexDb;
+            try {
+                const mod = await import('./cortex/vectorDb.js');
+                cortexDb = mod.cortexDb;
+            }
+            catch (e) {
+                return fail(`Cortex memory backend could not be loaded: ${safeDisplay(errMsg(e))}`);
+            }
+            if (sub === 'status') {
+                try {
+                    const stats = await cortexDb.stats();
+                    const byKindText = Array.isArray(stats.byKind) && stats.byKind.length > 0
+                        ? stats.byKind.map((k) => `${safeDisplay(String(k.kind || 'general'))}: ${k.c}`).join(', ')
+                        : 'none';
+                    const newest = stats.newest
+                        ? new Date(stats.newest).toISOString().slice(0, 16).replace('T', ' ')
+                        : 'never';
+                    return ok([
+                        `Cortex Status   : ${enabled ? 'Enabled' : 'Disabled'}`,
+                        `Engine          : ${safeDisplay(String(stats.engineType || 'native'))}`,
+                        `Neural Vectors  : ${stats.isNeural ? 'Active' : 'Lexical fallback'}`,
+                        `Stored Memories : ${stats.total} (${stats.distinct} distinct across ${stats.workspaces} workspace${stats.workspaces === 1 ? '' : 's'})`,
+                        `Extended Store  : ${stats.episodicCount ?? 0} episodic, ${stats.factsCount ?? 0} durable facts`,
+                        `Breakdown       : ${byKindText}`,
+                        `Last Updated    : ${newest}`,
+                        '',
+                        'Commands: /cortex list | /cortex search <query> | /cortex on | /cortex off | /cortex forget <id|--workspace>'
+                    ].join('\n'));
+                }
+                catch (e) {
+                    return ok([
+                        `Cortex Status   : ${enabled ? 'Enabled' : 'Disabled'}`,
+                        `Store           : Not initialized (${safeDisplay(errMsg(e))})`
+                    ].join('\n'));
+                }
+            }
+            if (sub === 'list' || sub === 'ls') {
+                const rows = await cortexDb.inventory({ workspace });
+                if (!Array.isArray(rows) || rows.length === 0) {
+                    return ok(`No Cortex memories stored for ${safeDisplay(path.basename(workspace) || workspace)}.`);
+                }
+                const preview = rows.slice(0, 20).map((r) => {
+                    const snippet = safeDisplay(String(r.text || '').replace(/\s+/g, ' ').trim()).slice(0, 110);
+                    return `  [${safeDisplay(String(r.kind || 'general')).padEnd(9)}] ${safeDisplay(String(r.id))} (hits:${r.hits ?? 0})\n      ${snippet}`;
+                });
+                return ok(`Cortex memories for ${safeDisplay(path.basename(workspace) || workspace)} (${rows.length}):\n\n${preview.join('\n')}`);
+            }
+            if (sub === 'search' || sub === 'find') {
+                const query = argv.slice(1).join(' ').trim();
+                if (!query)
+                    return fail('Usage: /cortex search <query>');
+                const hits = await cortexDb.search(query, 8, { workspace });
+                if (!Array.isArray(hits) || hits.length === 0) {
+                    return ok(`No Cortex memories matched "${safeDisplay(query)}".`);
+                }
+                const lines = hits.map((h, idx) => {
+                    const pct = Number.isFinite(h.score) ? `${Math.round(h.score * 100)}%` : 'n/a';
+                    const snippet = safeDisplay(String(h.text || '').replace(/\s+/g, ' ').trim()).slice(0, 140);
+                    return `  ${idx + 1}. [${safeDisplay(String(h.kind || 'general'))} · ${pct}] ${safeDisplay(String(h.id))}\n     ${snippet}`;
+                });
+                return ok(`Cortex matches for "${safeDisplay(query)}":\n\n${lines.join('\n')}`);
+            }
+            if (sub === 'forget' || sub === 'delete' || sub === 'clear') {
+                const target = String(argv[1] || '').trim();
+                if (!target) {
+                    return fail('Usage: /cortex forget <memoryId> | /cortex forget --workspace');
+                }
+                if (target === '--workspace') {
+                    const removed = await cortexDb.forget({ workspace });
+                    return ok(`Removed ${removed} Cortex memor${removed === 1 ? 'y' : 'ies'} for workspace ${safeDisplay(path.basename(workspace) || workspace)}.`, { effect: 'inline' });
+                }
+                const removed = await cortexDb.forget({ id: target });
+                return removed > 0
+                    ? ok(`Forgot Cortex memory "${safeDisplay(target)}".`, { effect: 'inline' })
+                    : fail(`No Cortex memory found with ID "${safeDisplay(target)}".`);
+            }
+            return fail(`Unknown /cortex subcommand "${safeDisplay(sub)}". Try /cortex status, list, search <query>, on, off, or forget <id|--workspace>.`);
+        }
+    },
+    {
         name: 'approvals',
         scope: 'local',
         usage: '/approvals [clear]',
@@ -1499,6 +1803,13 @@ export const COMMANDS = [
                 }
                 config.provider = nextProvider;
                 config.model = nextModel;
+                if (config.reasoningEffort) {
+                    const nextSpec = resolveActiveVariantSpec(config);
+                    if (nextSpec.source === 'agy_models' || !nextSpec.supported || !matchVariantOption(nextSpec, String(config.reasoningEffort))) {
+                        delete config.reasoningEffort;
+                        delete config.reasoningBudgetTokens;
+                    }
+                }
                 saveConfig(config);
                 if (ctx.loop) {
                     ctx.loop.config = loadConfig();
@@ -1507,11 +1818,13 @@ export const COMMANDS = [
                     }
                 }
                 if (ctx.prompt) {
+                    const activeVariant = typeof config.reasoningEffort === 'string' ? config.reasoningEffort : '';
                     if (typeof ctx.prompt.updateModel === 'function') {
-                        ctx.prompt.updateModel(config.provider, config.model);
+                        ctx.prompt.updateModel(config.provider, config.model, activeVariant);
                     }
                     else if (ctx.prompt.renderer?.status) {
-                        ctx.prompt.renderer.status.setSession({ provider: config.provider, model: config.model });
+                        ctx.prompt.renderer.status.setSession({ provider: config.provider, model: config.model, variant: activeVariant });
+                        ctx.prompt.surface?.setSessionInfo?.({ provider: config.provider, model: config.model, variant: activeVariant });
                         if (typeof ctx.prompt.scheduleDraw === 'function')
                             ctx.prompt.scheduleDraw();
                     }
@@ -1620,6 +1933,182 @@ export const COMMANDS = [
             else {
                 return activateModel(config.provider || 'antigravity', rawRequested, `Now using ${config.provider || 'antigravity'} / ${rawRequested}.`);
             }
+        }
+    },
+    {
+        name: 'variant',
+        aliases: ['effort', 'reasoning'],
+        scope: 'local',
+        usage: '/variant [level | auto | list]',
+        description: 'Detect and set reasoning variant/effort for the active model or ACP peer',
+        dialogTitle: 'Model Variant',
+        complete: () => {
+            const config = loadConfig();
+            const spec = resolveActiveVariantSpec(config);
+            const items = spec.options.map((opt) => ({
+                value: opt.id,
+                label: opt.id,
+                description: `${opt.label} — ${opt.description}`
+            }));
+            items.push({
+                value: 'auto',
+                label: 'auto',
+                description: spec.defaultVariant
+                    ? `reset to model default (${spec.defaultVariant})`
+                    : 'reset to model default reasoning behavior'
+            });
+            items.push({
+                value: 'list',
+                label: 'list',
+                description: 'inspect detected reasoning capabilities for the active model'
+            });
+            return items;
+        },
+        run: async (argv, ctx = {}) => {
+            const config = loadConfig();
+            const spec = resolveActiveVariantSpec(config, ctx);
+            if (argv.length === 0) {
+                if (ctx.prompt && typeof ctx.prompt.openLayer === 'function' && spec.supported && spec.options.length > 0) {
+                    const { SelectLayer } = await import('./tui/dialogs.js');
+                    const pickerItems = [
+                        ...spec.options.map((opt) => {
+                            const isActive = Boolean(spec.currentVariant && opt.id.toLowerCase() === spec.currentVariant.toLowerCase());
+                            return {
+                                id: opt.id,
+                                value: opt.id,
+                                label: `${isActive ? '● ' : '  '}${opt.label} (${opt.id})`,
+                                description: opt.description,
+                                category: `${spec.model || spec.provider} — ${spec.source === 'acp_live' ? 'ACP Live' : (spec.source === 'peer_catalogue' ? 'Peer Catalogue' : (spec.source === 'agy_models' ? 'Antigravity' : (spec.source === 'ollama_live' ? 'Ollama Local' : 'Detected')))}`
+                            };
+                        }),
+                        {
+                            id: 'auto',
+                            value: 'auto',
+                            label: `${!spec.currentVariant ? '● ' : '  '}Auto (model default)`,
+                            description: spec.defaultVariant
+                                ? `Use provider default (${spec.defaultVariant})`
+                                : 'Clear explicit reasoning override',
+                            category: 'Reset'
+                        }
+                    ];
+                    const chosen = await new Promise((resolve) => {
+                        const layer = new SelectLayer({
+                            title: `Variant · ${safeDisplay(spec.model || spec.provider || 'Active Model')}`,
+                            items: pickerItems,
+                            showFilter: pickerItems.length > 6,
+                            placeholder: 'Filter reasoning variants...',
+                            onPick: (item) => {
+                                resolve(item ? String(item.value || item.id || '') : null);
+                            }
+                        });
+                        ctx.prompt.openLayer(layer);
+                    });
+                    if (!chosen) {
+                        return ok('Variant unchanged.', { effect: 'silent' });
+                    }
+                    return applySelectedVariant(chosen, spec, config, ctx);
+                }
+                return ok(formatVariantStatusReport(spec));
+            }
+            const rawArg = argv.join(' ').trim();
+            const firstLower = String(argv[0] || '').trim().toLowerCase();
+            if (firstLower === 'list' || firstLower === 'status' || firstLower === 'show') {
+                return ok(formatVariantStatusReport(spec));
+            }
+            if (/[\r\n\0]/.test(rawArg)) {
+                return fail('Invalid variant value.');
+            }
+            return applySelectedVariant(rawArg, spec, config, ctx);
+        }
+    },
+    {
+        name: 'gui',
+        aliases: ['web', 'studio'],
+        scope: 'local',
+        usage: '/gui [open | status | stop | --port <n> | --no-open]',
+        description: 'Launch, inspect, or stop the local Causyne Web Studio GUI in your browser',
+        complete: () => [
+            { value: 'open', label: 'open', description: 'start and open Causyne Web Studio in your browser' },
+            { value: 'status', label: 'status', description: 'show active Web Studio URL, port, and workspace' },
+            { value: 'stop', label: 'stop', description: 'shut down the local Web Studio server' },
+            { value: '--no-open', label: '--no-open', description: 'start Web Studio without automatically opening a browser tab' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const tokens = argv.map((t) => String(t || '').trim()).filter(Boolean);
+            const first = (tokens[0] || 'open').toLowerCase();
+            if (first === 'status') {
+                const status = getGuiServerStatus();
+                if (!status.running) {
+                    return ok('Causyne Web Studio GUI is not running. Run /gui to launch it for this workspace.', { effect: 'inline' });
+                }
+                return ok([
+                    'Causyne Web Studio GUI — Running (127.0.0.1 loopback only)',
+                    `  URL       : ${status.url}`,
+                    `  Workspace : ${safeDisplay(status.workspaceRoot || '')}`,
+                    '  Stop      : /gui stop (also stops automatically on CLI exit)'
+                ].join('\n'), { effect: 'inline' });
+            }
+            if (first === 'stop' || first === 'close' || first === 'off') {
+                const stopped = await stopGuiServer();
+                if (ctx.prompt) {
+                    ctx.prompt.notice = stopped ? 'Web Studio GUI stopped' : 'Web Studio GUI was not running';
+                    ctx.prompt.scheduleDraw?.();
+                }
+                return ok(stopped ? 'Stopped local Causyne Web Studio GUI server.' : 'Causyne Web Studio GUI is not currently running.', { effect: 'inline' });
+            }
+            let port = 0;
+            let noOpen = false;
+            for (let i = 0; i < tokens.length; i++) {
+                const tok = tokens[i];
+                const lower = tok.toLowerCase();
+                if (lower === 'open' || lower === 'start')
+                    continue;
+                if (lower === '--no-open' || lower === '--no-browser') {
+                    noOpen = true;
+                    continue;
+                }
+                if (lower === '--port' && i + 1 < tokens.length) {
+                    const parsed = Number.parseInt(tokens[++i], 10);
+                    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+                        return fail(`Invalid port "${safeDisplay(tokens[i])}". Expected 0-65535.`);
+                    }
+                    port = parsed;
+                    continue;
+                }
+                if (lower.startsWith('--port=')) {
+                    const rawPort = tok.slice('--port='.length);
+                    const parsed = Number.parseInt(rawPort, 10);
+                    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+                        return fail(`Invalid port "${safeDisplay(rawPort)}". Expected 0-65535.`);
+                    }
+                    port = parsed;
+                    continue;
+                }
+                return fail(`Unknown /gui option "${safeDisplay(tok)}". Usage: /gui [open | status | stop | --port <n> | --no-open]`);
+            }
+            const workspaceRoot = ctx.loop?.workspaceRoot || process.cwd();
+            const { handle, reused, openedBrowser, browserHint, copiedToClipboard } = await launchGuiServer({
+                workspaceRoot,
+                port,
+                openBrowser: !noOpen
+            });
+            if (ctx.prompt) {
+                ctx.prompt.notice = `Web Studio live at ${handle.origin}`;
+                ctx.prompt.scheduleDraw?.();
+            }
+            const outLines = [
+                reused
+                    ? 'Causyne Web Studio GUI is already running (127.0.0.1 loopback only):'
+                    : 'Causyne Web Studio GUI started (127.0.0.1 loopback only · 256-bit session nonce):',
+                `  Open URL  : ${handle.url}${copiedToClipboard ? '  (copied to clipboard)' : ''}`,
+                `  Workspace : ${safeDisplay(handle.workspaceRoot)}`,
+                `  Browser   : ${openedBrowser ? 'Opened in your default browser' : 'Open the URL above in your browser'}`
+            ];
+            if (browserHint) {
+                outLines.push(`  Remote    : ${safeDisplay(browserHint)}`);
+            }
+            outLines.push('  Control   : /gui status | /gui stop (auto-stops when CLI exits)');
+            return ok(outLines.join('\n'), { effect: 'inline' });
         }
     },
     {
@@ -2544,7 +3033,31 @@ export const COMMANDS = [
                 lines.push('');
                 lines.push(`Recent Provider HTTP Errors: ${recentHttpErrors.length} recorded (run \`/doctor --report\` for a redacted diagnostic report).`);
             }
+            const criticalIssues = [];
+            const warnings = [];
+            if (!nodeOk)
+                criticalIssues.push(`Node.js ${nodeVer} is unsupported — upgrade to Node.js >= 24.`);
+            if (!auditCheck.ok)
+                criticalIssues.push(`Audit log chain has ${auditCheck.errors.length} integrity error(s) — run \`/audit verify\`.`);
+            if (policyState.found && policyState.error)
+                criticalIssues.push(`Enterprise policy invalid: ${safeDisplay(policyState.error)}`);
+            if (!config.provider)
+                warnings.push('No active provider configured — run `/setup` or `/model`.');
             lines.push('');
+            if (criticalIssues.length > 0) {
+                lines.push(`Diagnostics found ${criticalIssues.length} critical issue(s)${warnings.length > 0 ? ` and ${warnings.length} warning(s)` : ''}:`);
+                for (const issue of criticalIssues)
+                    lines.push(`  ✕ ${issue}`);
+                for (const warn of warnings)
+                    lines.push(`  △ ${warn}`);
+                return { ok: false, output: lines.join('\n') };
+            }
+            if (warnings.length > 0) {
+                lines.push(`Diagnostics passed with ${warnings.length} warning(s):`);
+                for (const warn of warnings)
+                    lines.push(`  △ ${warn}`);
+                return ok(lines.join('\n'));
+            }
             lines.push('All diagnostic invariants passed. Run /peers detect or /model list for component details.');
             return ok(lines.join('\n'));
         }

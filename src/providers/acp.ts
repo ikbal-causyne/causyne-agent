@@ -7,7 +7,7 @@ import { AcpClient } from '../acp/client.js';
 import { redactProviderSecrets } from './byokHttp.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
-import type { McpServer, RequestPermissionRequest, SessionUpdate, ToolKind } from '../acp/protocol.js';
+import { normalizeAcpMcpServers, type AcpDiscoveredVariantOption, type McpServer, type RequestPermissionRequest, type SessionUpdate, type ToolKind } from '../acp/protocol.js';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +53,7 @@ function resolvePeerMcpServersForCapabilities(
     }
     resolved.push(entry);
   }
-  return resolved;
+  return normalizeAcpMcpServers(resolved);
 }
 
 interface AcpTransportSnapshot {
@@ -83,6 +83,7 @@ export class AcpProvider extends LLMProvider {
   peerId: string;
   command: string;
   args: string[];
+  reasoningEffort: string | null;
   private readonly profileEnv: Record<string, string> | undefined;
   private readonly profileTimeoutSeconds: number | undefined;
   private activeClient: AcpClient | null = null;
@@ -105,6 +106,8 @@ export class AcpProvider extends LLMProvider {
 
   constructor(config: ProviderConfig = {}) {
     super(config);
+    const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+    this.reasoningEffort = rawEffort || null;
 
     const providerStr = String(config.provider || '').toLowerCase().trim();
     const configuredModel = typeof config.model === 'string' ? config.model.trim() : '';
@@ -802,9 +805,54 @@ export class AcpProvider extends LLMProvider {
       abortErr.name = 'AbortError';
       throw abortErr;
     }
+
+    // If user selected a reasoning variant and this ACP peer advertised a matching live configOption, apply it cleanly.
+    const liveVariant = client.getSessionVariants(sessionId);
+    if (!process.env.NODE_TEST_CONTEXT && targetModel && liveVariant) {
+      const nonDefaultVariants = liveVariant.options
+        .map((opt) => opt.value.trim())
+        .filter((v) => v.length > 0 && v.toLowerCase() !== 'default');
+      saveCachedModels(`acp/${this.peerId}`, liveModels.length > 0 ? liveModels : [targetModel], {
+        ...(sessionModels.currentModelId ? { currentModel: sessionModels.currentModelId } : {}),
+        variantsByModel: { [targetModel]: nonDefaultVariants }
+      });
+    }
+    if (this.reasoningEffort && liveVariant && liveVariant.options.length > 0) {
+      const matchedOpt = liveVariant.options.find(
+        (opt) => opt.value.toLowerCase() === this.reasoningEffort!.toLowerCase()
+      );
+      if (matchedOpt && matchedOpt.value !== liveVariant.currentValue) {
+        try {
+          await client.setSessionConfigOption(sessionId, liveVariant.configOptionId, matchedOpt.value, signal);
+        } catch {
+          // Non-fatal: peer retains its own default variant without losing any ACP capability.
+        }
+      }
+    }
+
     this.activeClient = client;
     this.activeSessionId = sessionId;
     return { client, sessionId };
+  }
+
+  getLiveVariantOption(): AcpDiscoveredVariantOption | null {
+    if (!this.activeClient) return null;
+    return this.activeClient.getSessionVariants(this.activeSessionId ?? undefined);
+  }
+
+  async applyVariant(value: string, configOptionId?: string, signal?: AbortSignal): Promise<boolean> {
+    const clean = String(value || '').trim();
+    this.reasoningEffort = clean || null;
+    if (!clean || !this.activeClient || !this.activeSessionId) return false;
+    const live = this.activeClient.getSessionVariants(this.activeSessionId);
+    const targetConfigId = configOptionId || live?.configOptionId;
+    if (!targetConfigId) return false;
+    try {
+      await this.activeClient.setSessionConfigOption(this.activeSessionId, targetConfigId, clean, signal);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   abort(): void {

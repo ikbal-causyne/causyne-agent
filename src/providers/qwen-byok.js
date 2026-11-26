@@ -5,10 +5,14 @@ import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
+import { resolveBudgetTokensForVariant } from '../modelVariants.js';
 export class QwenByokProvider extends LLMProvider {
     allowInsecureHttp;
+    reasoningEffort;
     constructor(config = {}) {
         super(config);
+        const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+        this.reasoningEffort = rawEffort || null;
         let url = (typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions';
         try {
             const parsed = new URL(url);
@@ -42,6 +46,18 @@ export class QwenByokProvider extends LLMProvider {
             messages: sanitizedMessages,
             temperature: resolveTemperature(options.temperature, 0.1)
         };
+        if (this.reasoningEffort && /qwen3|qwen-3|qwq/i.test(this.model || '')) {
+            if (this.reasoningEffort === 'off' || this.reasoningEffort === 'none') {
+                payload['enable_thinking'] = false;
+            }
+            else {
+                payload['enable_thinking'] = true;
+                const budget = resolveBudgetTokensForVariant(this.reasoningEffort, 32_768);
+                if (budget && budget > 0) {
+                    payload['thinking_budget'] = budget;
+                }
+            }
+        }
         if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
             payload['max_tokens'] = Math.floor(options.maxTokens);
         }

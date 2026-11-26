@@ -178,8 +178,38 @@ const ARGUMENT_LIMIT = 500;
 const SKILL_QUERY_MIN = 3;
 
 function commandItems(query = ''): CompletionItem[] {
-  // Suggested/high-frequency commands prioritized at the top on a bare '/' (OpenCode architecture)
-  const SUGGESTED_ORDER = ['model', 'sessions', 'new', 'clear', 'continuum', 'help', 'status', 'setup', 'mcp'];
+  // High-frequency accelerator commands prioritized at the top on a bare '/'.
+  // First 8 items fit directly on the opening page (MAX_VISIBLE = 8):
+  // /model, /variant, /sessions, /continuum, /usage, /skills, /plugins, /cortex
+  // followed immediately by everyday mid-session accelerators.
+  const SUGGESTED_ORDER = [
+    'model',
+    'variant',
+    'sessions',
+    'continuum',
+    'usage',
+    'skills',
+    'plugins',
+    'cortex',
+    'gui',
+    'compact',
+    'undo',
+    'diff',
+    'checkpoints',
+    'context',
+    'plans',
+    'thinking',
+    'mode',
+    'mcp',
+    'new',
+    'fork',
+    'clear',
+    'stop',
+    'status',
+    'doctor',
+    'setup',
+    'help'
+  ];
   const allCommands = listCommands('terminal');
 
   const sorted = allCommands.slice().sort((a, b) => {
@@ -402,13 +432,27 @@ export function suggest(text: unknown, cursor: number, options: SuggestOptions =
   if (!trigger) return null;
 
   if (trigger.kind === 'command') {
-    const items = rank(commandItems(trigger.query), trigger.query);
+    const pool = commandItems(trigger.query);
+    if (!trigger.query) {
+      // Preserve curated accelerator order on bare '/' instead of re-sorting alphabetically.
+      const items = pool.slice(0, 100);
+      if (items.length === 0) return null;
+      return { ...trigger, items, total: pool.length };
+    }
+    const items = rank(pool, trigger.query, 100);
     if (items.length === 0) return null;
     return { ...trigger, items, total: items.total };
   }
 
   if (trigger.kind === 'command-argument') {
-    const items = rank(argumentItems(trigger.command), trigger.query, ARGUMENT_LIMIT);
+    const pool = argumentItems(trigger.command);
+    if (!trigger.query) {
+      // Preserve command-defined logical order (e.g. off -> low -> medium -> high -> xhigh -> max).
+      const items = pool.slice(0, ARGUMENT_LIMIT);
+      if (items.length === 0) return null;
+      return { ...trigger, items, total: pool.length };
+    }
+    const items = rank(pool, trigger.query, ARGUMENT_LIMIT);
     if (items.length === 0) return null;
     return { ...trigger, items, total: items.total };
   }

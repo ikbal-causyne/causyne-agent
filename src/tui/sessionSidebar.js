@@ -78,6 +78,9 @@ export function sessionSidebarRows(facts, height, width = SIDEBAR_WIDTH) {
     else {
         line([safeFacts.provider, safeFacts.model].filter(Boolean).join(' / ') || 'Not configured');
     }
+    if (safeFacts.variant) {
+        styled(paint('accent', `Variant · ${oneLine(safeFacts.variant)}`));
+    }
     line();
     styled(bold('Workspace'));
     line(safeFacts.cwd || 'Unknown');

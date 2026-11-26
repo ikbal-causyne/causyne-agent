@@ -10,7 +10,8 @@ import {
   parseMaxTurns,
   parseMaxTokens,
   parseMaxBudgetUsd,
-  parseTimeoutMs
+  parseTimeoutMs,
+  parseVariantOption
 } from './headlessCli.js';
 import { runLicenseCommand } from './licensing/entitlements.js';
 import { runSelfUpdate, diagnoseInstallation, formatDoctorReport } from './autoUpdate.js';
@@ -91,19 +92,46 @@ program
   .option('--output-format <format>', 'Output format for headless runs: text, json, stream-json')
   .option('-m, --model <name>', 'Override model for this run without modifying saved config')
   .option('--provider <name>', 'Override provider for this run without modifying saved config')
+  .option('--variant <level>', 'Override reasoning variant/effort for this run (e.g. off, low, medium, high, xhigh, max, ultra)')
   .option('--max-turns <count>', 'Maximum agent turns/steps for this run')
   .option('--max-tokens <count>', 'Maximum token budget for this headless run')
   .option('--max-budget-usd <usd>', 'Maximum USD spend ceiling for this headless run')
   .option('--timeout <seconds>', 'Wall-clock timeout in seconds for headless execution')
   .option('--resume', 'Reuse active workspace session instead of an isolated ephemeral session')
+  .option('--session <id>', 'Resume a specific session ID for headless runs')
   .option('--json-schema <schema>', 'Require and validate JSON response matching inline JSON or file path')
   .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
-  .version(pkgVersion)
+  .option('-v', 'output the version number')
+  .version(pkgVersion, '-V, --version')
   .action(async (options: Record<string, any>) => {
+    if (options.v) {
+      console.log(pkgVersion);
+      process.exit(0);
+    }
     if (options.print === undefined && !options.outputFormat) {
       if (program.args.length > 0) {
         console.error('Invalid command: %s\nSee --help for a list of available commands.', program.args.join(' '));
         process.exit(1);
+      }
+      const hasInteractiveOverride = Boolean(
+        options.model || options.provider || options.variant || options.permissionMode || options.resume
+      );
+      if (hasInteractiveOverride && process.stdout.isTTY) {
+        try {
+          parsePermissionMode(options.permissionMode);
+          parseVariantOption(options.variant);
+          await chatMode({
+            home: true,
+            provider: options.provider,
+            model: options.model,
+            variant: options.variant,
+            permissionMode: options.permissionMode
+          });
+          return;
+        } catch (err: unknown) {
+          console.error(redactProviderSecrets(err instanceof Error ? err.message : String(err)));
+          process.exit(2);
+        }
       }
       program.outputHelp();
       process.exit(0);
@@ -111,6 +139,7 @@ program
     try {
       parseOutputFormat(options.outputFormat);
       parsePermissionMode(options.permissionMode);
+      parseVariantOption(options.variant);
       parseMaxTurns(options.maxTurns);
       parseMaxTokens(options.maxTokens);
       parseMaxBudgetUsd(options.maxBudgetUsd);
@@ -124,11 +153,13 @@ program
         outputFormat: options.outputFormat || 'text',
         model: options.model,
         provider: options.provider,
+        variant: options.variant,
         maxTurns: options.maxTurns,
         maxTokens: options.maxTokens,
         maxBudgetUsd: options.maxBudgetUsd,
         timeoutSeconds: options.timeout,
         resumeSession: options.resume === true,
+        sessionId: options.session,
         jsonSchema: options.jsonSchema,
         permissionMode: options.permissionMode
       });
@@ -171,22 +202,39 @@ program
 
 program
   .command('web')
+  .aliases(['gui', 'studio'])
   .description('Start the foreground local Skybridge web workspace (127.0.0.1 only, nonce-authenticated)')
   .option('-p, --port <number>', 'Loopback port (0 = ephemeral)', '0')
   .option('-d, --dir <directory>', 'Workspace folder locked to this Skybridge session')
+  .option('--no-open', 'Do not automatically open the Web Studio URL in your browser')
+  .option('--json', 'Emit startup details as a single JSON line for scripts/IDEs')
   .action(async (options: Record<string, any>) => {
     const { startSkybridgeServer } = await import('./web/skybridgeServer.js');
+    const { openBrowserUrl } = await import('./utils/browserOpen.js');
     const parsedPort = Number.parseInt(String(options.port ?? '0'), 10);
     const port = Number.isInteger(parsedPort) && parsedPort >= 0 && parsedPort <= 65535 ? parsedPort : 0;
     const workspaceRoot = options.dir ? resolveUserPath(String(options.dir)) : process.cwd();
     const handle = await startSkybridgeServer({ workspaceRoot, port });
-    console.log('');
-    console.log('Causyne Local Skybridge running (foreground, 127.0.0.1 only)');
-    console.log(`  Workspace : ${safeDisplay(handle.workspaceRoot)}`);
-    console.log(`  Open URL  : ${handle.url}`);
-    console.log('  Security  : Host/Origin locked · 256-bit nonce · OS sandbox & approvals active');
-    console.log('  Stop      : Press Ctrl+C (exits cleanly, no background daemon)');
-    console.log('');
+    const shouldOpen = options.open !== false && !options.json && process.stdout.isTTY;
+    const openRes = shouldOpen ? await openBrowserUrl(handle.url) : { opened: false };
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify({
+        url: handle.url,
+        origin: handle.origin,
+        port: handle.port,
+        workspaceRoot: handle.workspaceRoot
+      })}\n`);
+    } else {
+      console.log('');
+      console.log('Causyne Local Skybridge running (foreground, 127.0.0.1 only)');
+      console.log(`  Workspace : ${safeDisplay(handle.workspaceRoot)}`);
+      console.log(`  Open URL  : ${handle.url}`);
+      if (openRes.opened) console.log('  Browser   : Opened in your default browser');
+      else if (openRes.hint) console.log(`  Remote    : ${safeDisplay(openRes.hint)}`);
+      console.log('  Security  : Host/Origin locked · 256-bit nonce · OS sandbox & approvals active');
+      console.log('  Stop      : Press Ctrl+C (exits cleanly, no background daemon)');
+      console.log('');
+    }
     const shutdown = async () => {
       await handle.close();
       process.exit(0);
@@ -218,11 +266,13 @@ program
   .option('--output-format <format>', 'Output format: text, json, stream-json')
   .option('-m, --model <name>', 'Override model for this run without modifying saved config')
   .option('--provider <name>', 'Override provider for this run without modifying saved config')
+  .option('--variant <level>', 'Override reasoning variant/effort for this run without modifying saved config')
   .option('--max-turns <count>', 'Maximum agent turns/steps for this run')
   .option('--max-tokens <count>', 'Maximum token budget for this headless run')
   .option('--max-budget-usd <usd>', 'Maximum USD spend ceiling for this headless run')
   .option('--timeout <seconds>', 'Wall-clock timeout in seconds for headless execution')
   .option('--resume', 'Reuse active workspace session instead of an isolated ephemeral session')
+  .option('--session <id>', 'Resume a specific session ID for this run')
   .option('--json-schema <schema>', 'Require and validate JSON response matching inline JSON or file path')
   .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
   .action(async (task: string | undefined, options: Record<string, any>) => {
@@ -230,6 +280,7 @@ program
     try {
       if (options.outputFormat) parseOutputFormat(options.outputFormat);
       parsePermissionMode(options.permissionMode);
+      parseVariantOption(options.variant);
       parseMaxTurns(options.maxTurns);
       parseMaxTokens(options.maxTokens);
       parseMaxBudgetUsd(options.maxBudgetUsd);
@@ -240,16 +291,18 @@ program
         console.error('No task provided. Pass a task argument or pipe input on stdin.');
         process.exit(2);
       }
-      if (options.outputFormat || task === '-' || !task || options.jsonSchema || options.timeout || options.maxBudgetUsd || options.maxTokens) {
+      if (options.outputFormat || task === '-' || !task || options.jsonSchema || options.timeout || options.maxBudgetUsd || options.maxTokens || options.session) {
         await runHeadlessTask(prompt, {
           outputFormat: options.outputFormat || 'text',
           model: options.model,
           provider: options.provider,
+          variant: options.variant,
           maxTurns: options.maxTurns,
           maxTokens: options.maxTokens,
           maxBudgetUsd: options.maxBudgetUsd,
           timeoutSeconds: options.timeout,
           resumeSession: options.resume === true,
+          sessionId: options.session,
           jsonSchema: options.jsonSchema,
           permissionMode: options.permissionMode
         });
@@ -266,9 +319,25 @@ program
   .command('chat')
   .description('Start interactive chat mode with the agent')
   .option('--dev-emulator', 'Retired compatibility flag; grants no additional permissions')
+  .option('-m, --model <name>', 'Override model for this chat session without modifying saved config')
+  .option('--provider <name>', 'Override provider for this chat session without modifying saved config')
+  .option('--variant <level>', 'Override reasoning variant/effort for this chat session without modifying saved config')
+  .option('--permission-mode <mode>', 'Autonomy mode override for this chat session (A, B, or C)')
   .action(async (options: Record<string, any>) => {
     announceDevEmulator(options.devEmulator);
-    await chatMode();
+    try {
+      parsePermissionMode(options.permissionMode);
+      parseVariantOption(options.variant);
+      await chatMode({
+        provider: options.provider,
+        model: options.model,
+        variant: options.variant,
+        permissionMode: options.permissionMode
+      });
+    } catch (err: unknown) {
+      console.error(redactProviderSecrets(err instanceof Error ? err.message : String(err)));
+      process.exit(2);
+    }
   });
 
 program

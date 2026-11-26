@@ -63,6 +63,7 @@ export function homeStatusLine(arg: Record<string, any> | null | undefined = {})
  */
 export const PRIMARY_ACTIONS: HomeAction[] = [
   { id: 'chat', label: 'chat', hint: 'talk to the agent here', kind: 'chat' },
+  { id: 'gui', label: 'web studio', hint: 'open local browser GUI workspace (/gui)', kind: 'command', command: '/gui' },
   {
     id: 'status',
     label: 'status',
@@ -81,7 +82,7 @@ export const PRIMARY_ACTIONS: HomeAction[] = [
     run: async () => (await import('../reporting.js')).buildUsageText()
   },
   { id: 'config', label: 'setup', hint: 'provider · endpoint · model · permissions', kind: 'config' },
-  { id: 'more', label: 'more…', hint: 'sessions · model · approvals · tools', kind: 'more' }
+  { id: 'more', label: 'more…', hint: 'sessions · model · variant · approvals · tools', kind: 'more' }
 ];
 
 /**

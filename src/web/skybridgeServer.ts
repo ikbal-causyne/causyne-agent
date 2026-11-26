@@ -62,7 +62,8 @@ import { listCommands, parseCommand, runCommand } from '../commands.js';
 import { formatByokProbeReport, runZeroSpendByokProbe } from '../verification/byokSmokeProbe.js';
 import { listGroups } from '../checkpoints.js';
 import { listCompiledSkills } from '../skillsManager.js';
-import { serverStatus } from '../mcp/mcpRegistry.js';
+import { serverStatus, closeAll as closeAllMcpServers } from '../mcp/mcpRegistry.js';
+import { lspSessionManager } from '../lsp/lspClient.js';
 import { listAllPeers } from '../acp/peerProfiles.js';
 import { listWorktrees } from '../worktreeManager.js';
 import { backgroundTaskManager } from '../backgroundTasks.js';
@@ -92,7 +93,7 @@ import {
   LICENSE_ENFORCEMENT_ENABLED,
   isValidLicensePlan
 } from '../licensing/policy.js';
-import { renderSkybridgeHtml } from './skybridgeUi.js';
+import { renderSkybridgeHtml, getCausyneFaviconSvg } from './skybridgeUi.js';
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const MAX_FILE_READ_BYTES = 512 * 1024;
@@ -1284,6 +1285,14 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
 
     const parsedUrl = new URL(req.url || '/', `http://127.0.0.1:${boundPort}`);
     const pathname = parsedUrl.pathname;
+
+    if (req.method === 'GET' && pathname === '/favicon.svg') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.end(getCausyneFaviconSvg());
+      return;
+    }
 
     if (req.method === 'GET' && pathname === '/favicon.ico') {
       res.statusCode = 204;
@@ -2760,6 +2769,17 @@ export async function startSkybridgeServer(options: StartSkybridgeOptions = {}):
         }
       }
       activeRuns.clear();
+      await Promise.race([
+        Promise.allSettled([
+          Promise.resolve().then(() => closeAllMcpServers()),
+          Promise.resolve().then(() => lspSessionManager.shutdownAll()),
+          Promise.resolve().then(() => backgroundTaskManager.stopAll())
+        ]),
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 2500);
+          timer.unref?.();
+        })
+      ]);
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

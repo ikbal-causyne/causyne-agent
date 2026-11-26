@@ -3,8 +3,9 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider, mimeTypeForAudioFormat } from './base.js';
 import { scanAndAdaptToolsForProvider, adaptSchemaForGemini, isEmptyObjectSchema, normalizeToolName } from '../tools/toolScanner.js';
 import { safeParseJsonObject, sanitizeProviderToolId, serializeAndDecodeArguments } from './wireNormalizer.js';
-import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
+import { ProviderHttpError, requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamGeminiGenerateContent, wantsStreaming } from './byokStream.js';
+import { resolveBudgetTokensForVariant } from '../modelVariants.js';
 export { adaptSchemaForGemini, isEmptyObjectSchema };
 export function geminiUsageToOpenAIShape(usageMetadata) {
     const nonNeg = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
@@ -22,10 +23,13 @@ export function geminiUsageToOpenAIShape(usageMetadata) {
 }
 export class GeminiProvider extends LLMProvider {
     allowInsecureHttp;
+    reasoningEffort;
     constructor(config = {}) {
         super(config);
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['gemini']) || '');
         this.allowInsecureHttp = config.allowInsecureHttp === true;
+        const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+        this.reasoningEffort = rawEffort || null;
         const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
         if (customUrl) {
             try {
@@ -159,6 +163,35 @@ export class GeminiProvider extends LLMProvider {
         if (options.jsonMode) {
             generationConfig['responseMimeType'] = 'application/json';
         }
+        if (this.reasoningEffort) {
+            const loweredModel = (this.model || '').toLowerCase();
+            if (/^gemini-(?:3|4)/.test(loweredModel)) {
+                const levelMap = {
+                    minimal: loweredModel.includes('flash') ? 'MINIMAL' : 'LOW',
+                    low: 'LOW',
+                    medium: 'MEDIUM',
+                    high: 'HIGH',
+                    xhigh: 'HIGH',
+                    max: 'HIGH',
+                    ultra: 'HIGH'
+                };
+                const level = levelMap[this.reasoningEffort];
+                if (level) {
+                    generationConfig['thinkingConfig'] = { thinkingLevel: level };
+                }
+            }
+            else if (/^gemini-2[.-]5/.test(loweredModel)) {
+                const budget = resolveBudgetTokensForVariant(this.reasoningEffort, 24_576);
+                if (budget !== null) {
+                    if (budget === 0 && loweredModel.includes('pro')) {
+                        generationConfig['thinkingConfig'] = { thinkingBudget: 2048 };
+                    }
+                    else {
+                        generationConfig['thinkingConfig'] = { thinkingBudget: budget };
+                    }
+                }
+            }
+        }
         const payload = {
             contents,
             generationConfig
@@ -189,17 +222,32 @@ export class GeminiProvider extends LLMProvider {
             hasApiKey: true,
             allowInsecureHttp: this.allowInsecureHttp
         };
-        const data = wantsStreaming(options)
+        const runGeminiRequest = async (reqPayload) => (wantsStreaming(options)
             ? await streamGeminiGenerateContent({
                 ...requestOpts,
-                payload,
+                payload: reqPayload,
                 onChunk: options.onChunk,
                 onReasoningChunk: options.onReasoningChunk
             })
             : await safeProviderFetchJson({
                 ...requestOpts,
-                body: JSON.stringify(payload)
-            });
+                body: JSON.stringify(reqPayload)
+            }));
+        let data;
+        try {
+            data = await runGeminiRequest(payload);
+        }
+        catch (err) {
+            const rejectedThinking = Boolean(generationConfig['thinkingConfig'])
+                && err instanceof ProviderHttpError
+                && err.status === 400
+                && /thinkingConfig|thinkingLevel|thinkingBudget|unknown name/i.test(err.message);
+            if (!rejectedThinking)
+                throw err;
+            const fallbackGen = { ...generationConfig };
+            delete fallbackGen['thinkingConfig'];
+            data = await runGeminiRequest({ ...payload, generationConfig: fallbackGen });
+        }
         const firstCandidate = data['candidates']?.[0];
         if (!firstCandidate) {
             const blockReason = data['promptFeedback']?.blockReason;

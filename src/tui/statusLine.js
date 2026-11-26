@@ -82,6 +82,7 @@ function finiteWidth(width) {
 export class StatusLine {
     model = '';
     provider = '';
+    variant = '';
     tier = '';
     cwd = '';
     // Both in CHARACTERS — the unit the window is actually budgeted in.
@@ -110,6 +111,8 @@ export class StatusLine {
             this.model = shortModel(info.model);
         if (info.provider !== undefined)
             this.provider = info.provider ? oneLineDisplay(info.provider) : '';
+        if (info.variant !== undefined)
+            this.variant = info.variant ? oneLineDisplay(info.variant) : '';
         if (info.tier !== undefined)
             this.tier = info.tier ? oneLineDisplay(info.tier) : '';
         if (info.cwd !== undefined)
@@ -201,8 +204,9 @@ export class StatusLine {
         const meter = contextMeter(Math.round(this.contextChars / CHARS_PER_TOKEN), Math.round(this.contextLimit / CHARS_PER_TOKEN));
         if (meter)
             segments.push(meter);
-        if (this.model)
-            segments.push(this.model);
+        if (this.model) {
+            segments.push(this.variant ? `${this.model} [${this.variant}]` : this.model);
+        }
         const separator = `  ${GLYPHS.dot}  `;
         const sepWidth = visibleWidth(separator);
         const rawMessage = safeTick !== undefined
@@ -247,7 +251,7 @@ export class StatusLine {
     renderStatic(message, width = 80) {
         const parts = [oneLineDisplay(message)];
         if (this.model)
-            parts.push(this.model);
+            parts.push(this.variant ? `${this.model} [${this.variant}]` : this.model);
         return truncate(`${GLYPHS.dot} ${parts.join(`  ${GLYPHS.dot}  `)}`, finiteWidth(width), GLYPHS.ellipsis);
     }
 }

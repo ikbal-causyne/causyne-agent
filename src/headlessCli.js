@@ -8,6 +8,7 @@
  */
 import fs from 'node:fs';
 import { AgentLoop } from './agentLoop.js';
+import { normalizeVariantToken } from './modelVariants.js';
 import { safeDisplay } from './tui/text.js';
 import { lspSessionManager } from './lsp/lspClient.js';
 import { backgroundTaskManager } from './backgroundTasks.js';
@@ -68,6 +69,79 @@ function loadJsonSchemaObject(raw) {
     }
     return parsed;
 }
+function validateSchemaNode(value, schema, pathLabel, depth) {
+    if (depth > 12)
+        return null;
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+        const matched = schema.enum.some((candidate) => Object.is(candidate, value) || JSON.stringify(candidate) === JSON.stringify(value));
+        if (!matched) {
+            return `${pathLabel} must match one of enum values (${schema.enum.map((v) => JSON.stringify(v)).join(', ')})`;
+        }
+    }
+    const expectedTypes = Array.isArray(schema.type)
+        ? schema.type.filter((t) => typeof t === 'string')
+        : (typeof schema.type === 'string' ? [schema.type] : []);
+    if (expectedTypes.length > 0) {
+        const typeMatches = (t) => {
+            if (t === 'null')
+                return value === null;
+            if (t === 'array')
+                return Array.isArray(value);
+            if (t === 'object')
+                return typeof value === 'object' && value !== null && !Array.isArray(value);
+            if (t === 'integer')
+                return typeof value === 'number' && Number.isInteger(value);
+            if (t === 'number')
+                return typeof value === 'number' && Number.isFinite(value);
+            if (t === 'string')
+                return typeof value === 'string';
+            if (t === 'boolean')
+                return typeof value === 'boolean';
+            return true;
+        };
+        if (!expectedTypes.some(typeMatches)) {
+            return `${pathLabel} expected type ${expectedTypes.join('|')}`;
+        }
+    }
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const record = value;
+        if (Array.isArray(schema.required)) {
+            const missing = schema.required.filter((k) => typeof k === 'string' && !Object.hasOwn(record, k));
+            if (missing.length > 0) {
+                return `${pathLabel} missing required keys: ${missing.join(', ')}`;
+            }
+        }
+        const props = schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)
+            ? schema.properties
+            : null;
+        if (props) {
+            for (const [key, propSchema] of Object.entries(props)) {
+                if (!Object.hasOwn(record, key))
+                    continue;
+                if (propSchema && typeof propSchema === 'object' && !Array.isArray(propSchema)) {
+                    const err = validateSchemaNode(record[key], propSchema, `${pathLabel}.${key}`, depth + 1);
+                    if (err)
+                        return err;
+                }
+            }
+            if (schema.additionalProperties === false) {
+                const extra = Object.keys(record).filter((k) => !Object.hasOwn(props, k));
+                if (extra.length > 0) {
+                    return `${pathLabel} contains disallowed additional properties: ${extra.join(', ')}`;
+                }
+            }
+        }
+    }
+    if (Array.isArray(value) && schema.items && typeof schema.items === 'object' && !Array.isArray(schema.items)) {
+        const itemSchema = schema.items;
+        for (let i = 0; i < Math.min(value.length, 200); i++) {
+            const err = validateSchemaNode(value[i], itemSchema, `${pathLabel}[${i}]`, depth + 1);
+            if (err)
+                return err;
+        }
+    }
+    return null;
+}
 function extractAndValidateStructuredOutput(responseText, schema) {
     let candidate = responseText.trim();
     const fenceStart = candidate.indexOf('```');
@@ -88,18 +162,12 @@ function extractAndValidateStructuredOutput(responseText, schema) {
             error: `Headless --json-schema validation failed: response is not valid JSON (${err instanceof Error ? err.message : String(err)}).`
         };
     }
-    if (schema.type === 'object' && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) {
-        return { ok: false, error: 'Headless --json-schema validation failed: expected a JSON object.' };
-    }
-    if (schema.type === 'array' && !Array.isArray(parsed)) {
-        return { ok: false, error: 'Headless --json-schema validation failed: expected a JSON array.' };
-    }
-    if (Array.isArray(schema.required) && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const record = parsed;
-        const missing = schema.required.filter((k) => typeof k === 'string' && !Object.hasOwn(record, k));
-        if (missing.length > 0) {
-            return { ok: false, error: `Headless --json-schema validation failed: missing required keys: ${missing.join(', ')}.` };
-        }
+    const validationError = validateSchemaNode(parsed, schema, '$', 0);
+    if (validationError) {
+        return {
+            ok: false,
+            error: `Headless --json-schema validation failed: ${validationError}.`
+        };
     }
     return { ok: true, value: parsed };
 }
@@ -133,6 +201,18 @@ export function parseMaxTurns(raw) {
         throw new Error(`Invalid --max-turns "${raw}". Expected an integer between 1 and ${MAX_HEADLESS_TURNS}.`);
     }
     return parsed;
+}
+export function parseVariantOption(raw) {
+    if (raw === undefined || raw === null || raw === '')
+        return undefined;
+    const text = String(raw).trim();
+    if (!text)
+        return undefined;
+    if (text.length > 32 || !/^[a-zA-Z0-9 _-]+$/.test(text)) {
+        throw new Error(`Invalid --variant "${safeDisplay(text)}". Expected a reasoning level such as off, low, medium, high, xhigh, max, or ultra.`);
+    }
+    const norm = normalizeVariantToken(text);
+    return norm === 'auto' ? undefined : norm;
 }
 export function composeHeadlessPrompt(promptArg, stdinText) {
     const cleanStdin = stdinText.trim();
@@ -352,6 +432,7 @@ export async function runHeadlessTask(taskPrompt, options = {}) {
     const startedAt = Date.now();
     const format = parseOutputFormat(options.outputFormat);
     const permissionMode = parsePermissionMode(options.permissionMode);
+    const variant = parseVariantOption(options.variant);
     const maxTurns = parseMaxTurns(options.maxTurns);
     const maxTokens = parseMaxTokens(options.maxTokens);
     const maxBudgetUsd = parseMaxBudgetUsd(options.maxBudgetUsd);
@@ -389,13 +470,18 @@ export async function runHeadlessTask(taskPrompt, options = {}) {
         process.exitCode = 2;
         return emptyResult;
     }
+    const explicitSessionId = typeof options.sessionId === 'string' && options.sessionId.trim()
+        ? options.sessionId.trim()
+        : undefined;
     const loop = options.loopFactory
         ? options.loopFactory(sink, taskId, cleanPrompt)
         : new AgentLoop(sink, taskId, cleanPrompt, {
-            ephemeralSession: options.resumeSession !== true,
+            ephemeralSession: options.resumeSession !== true && !explicitSessionId,
+            ...(explicitSessionId ? { memorySessionId: explicitSessionId } : {}),
             ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
             ...(options.provider ? { provider: options.provider } : {}),
-            ...(options.model ? { model: options.model } : {})
+            ...(options.model ? { model: options.model } : {}),
+            ...(variant ? { variant } : {})
         });
     if (permissionMode)
         loop.autonomyOverride = permissionMode;
@@ -403,6 +489,8 @@ export async function runHeadlessTask(taskPrompt, options = {}) {
         loop.providerOverride = options.provider;
     if (options.model)
         loop.modelOverride = options.model;
+    if (variant)
+        loop.variantOverride = variant;
     if (maxTurns !== undefined)
         loop.maxStepsCeiling = maxTurns;
     if (maxTokens !== undefined)
@@ -422,7 +510,24 @@ export async function runHeadlessTask(taskPrompt, options = {}) {
     }
     let fatalError = null;
     let timedOut = false;
+    let signalExitCode = null;
     let timeoutHandle = null;
+    const onSigInt = () => {
+        signalExitCode = 130;
+        try {
+            loop.abort?.();
+        }
+        catch { /* ignore */ }
+    };
+    const onSigTerm = () => {
+        signalExitCode = 143;
+        try {
+            loop.abort?.();
+        }
+        catch { /* ignore */ }
+    };
+    process.once('SIGINT', onSigInt);
+    process.once('SIGTERM', onSigTerm);
     if (timeoutMs !== undefined) {
         timeoutHandle = setTimeout(() => {
             timedOut = true;
@@ -440,34 +545,27 @@ export async function runHeadlessTask(taskPrompt, options = {}) {
         fatalError = safeDisplay(err instanceof Error ? err.message : String(err));
     }
     finally {
+        process.removeListener('SIGINT', onSigInt);
+        process.removeListener('SIGTERM', onSigTerm);
         if (timeoutHandle)
             clearTimeout(timeoutHandle);
-        try {
-            await loop.llm?.close?.();
-        }
-        catch {
-            // ignore provider teardown errors on headless exit
-        }
-        try {
-            await closeAllMcpServers();
-        }
-        catch {
-            // ignore MCP server teardown errors on headless exit
-        }
-        try {
-            await lspSessionManager.shutdownAll();
-        }
-        catch {
-            // ignore LSP shutdown errors on headless exit
-        }
-        try {
-            backgroundTaskManager.stopAll();
-        }
-        catch {
-            // ignore background task shutdown errors on headless exit
-        }
+        await Promise.race([
+            Promise.allSettled([
+                Promise.resolve().then(() => loop.llm?.close?.()),
+                Promise.resolve().then(() => closeAllMcpServers()),
+                Promise.resolve().then(() => lspSessionManager.shutdownAll()),
+                Promise.resolve().then(() => backgroundTaskManager.stopAll())
+            ]),
+            new Promise((resolve) => {
+                const timer = setTimeout(resolve, 3000);
+                timer.unref?.();
+            })
+        ]);
     }
-    if (timedOut && !fatalError) {
+    if (signalExitCode !== null && !fatalError) {
+        fatalError = `Headless execution interrupted by signal (exit ${signalExitCode}).`;
+    }
+    else if (timedOut && !fatalError) {
         fatalError = `Headless execution timed out after ${timeoutMs}ms.`;
     }
     let structuredOutput = undefined;
@@ -513,6 +611,6 @@ export async function runHeadlessTask(taskPrompt, options = {}) {
             stderr.write(`${result.error}\n`);
         }
     }
-    process.exitCode = result.ok ? 0 : 1;
+    process.exitCode = result.ok ? 0 : (signalExitCode ?? (timedOut ? 124 : 1));
     return result;
 }

@@ -13,11 +13,13 @@ import {
   serializeAndDecodeArguments
 } from './wireNormalizer.js';
 import {
+  ProviderHttpError,
   requireApiKey,
   resolveTemperature,
   safeProviderFetchJson
 } from './byokHttp.js';
 import { streamGeminiGenerateContent, wantsStreaming } from './byokStream.js';
+import { resolveBudgetTokensForVariant } from '../modelVariants.js';
 
 export { adaptSchemaForGemini, isEmptyObjectSchema };
 
@@ -44,11 +46,14 @@ export function geminiUsageToOpenAIShape(usageMetadata: Record<string, any> | nu
 
 export class GeminiProvider extends LLMProvider {
   allowInsecureHttp: boolean;
+  reasoningEffort: string | null;
 
   constructor(config: ProviderConfig = {}) {
     super(config);
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['gemini']) || '');
     this.allowInsecureHttp = config.allowInsecureHttp === true;
+    const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+    this.reasoningEffort = rawEffort || null;
     const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
     if (customUrl) {
       try {
@@ -170,6 +175,33 @@ export class GeminiProvider extends LLMProvider {
     if (options.jsonMode) {
       generationConfig['responseMimeType'] = 'application/json';
     }
+    if (this.reasoningEffort) {
+      const loweredModel = (this.model || '').toLowerCase();
+      if (/^gemini-(?:3|4)/.test(loweredModel)) {
+        const levelMap: Record<string, string> = {
+          minimal: loweredModel.includes('flash') ? 'MINIMAL' : 'LOW',
+          low: 'LOW',
+          medium: 'MEDIUM',
+          high: 'HIGH',
+          xhigh: 'HIGH',
+          max: 'HIGH',
+          ultra: 'HIGH'
+        };
+        const level = levelMap[this.reasoningEffort];
+        if (level) {
+          generationConfig['thinkingConfig'] = { thinkingLevel: level };
+        }
+      } else if (/^gemini-2[.-]5/.test(loweredModel)) {
+        const budget = resolveBudgetTokensForVariant(this.reasoningEffort, 24_576);
+        if (budget !== null) {
+          if (budget === 0 && loweredModel.includes('pro')) {
+            generationConfig['thinkingConfig'] = { thinkingBudget: 2048 };
+          } else {
+            generationConfig['thinkingConfig'] = { thinkingBudget: budget };
+          }
+        }
+      }
+    }
     const payload: Record<string, any> = {
       contents,
       generationConfig
@@ -204,17 +236,33 @@ export class GeminiProvider extends LLMProvider {
       allowInsecureHttp: this.allowInsecureHttp
     };
 
-    const data: Record<string, any> = wantsStreaming(options)
-      ? await streamGeminiGenerateContent({
-          ...requestOpts,
-          payload,
-          onChunk: options.onChunk,
-          onReasoningChunk: options.onReasoningChunk
-        })
-      : await safeProviderFetchJson({
-          ...requestOpts,
-          body: JSON.stringify(payload)
-        });
+    const runGeminiRequest = async (reqPayload: Record<string, any>): Promise<Record<string, any>> => (
+      wantsStreaming(options)
+        ? await streamGeminiGenerateContent({
+            ...requestOpts,
+            payload: reqPayload,
+            onChunk: options.onChunk,
+            onReasoningChunk: options.onReasoningChunk
+          })
+        : await safeProviderFetchJson({
+            ...requestOpts,
+            body: JSON.stringify(reqPayload)
+          })
+    );
+
+    let data: Record<string, any>;
+    try {
+      data = await runGeminiRequest(payload);
+    } catch (err: unknown) {
+      const rejectedThinking = Boolean(generationConfig['thinkingConfig'])
+        && err instanceof ProviderHttpError
+        && err.status === 400
+        && /thinkingConfig|thinkingLevel|thinkingBudget|unknown name/i.test(err.message);
+      if (!rejectedThinking) throw err;
+      const fallbackGen = { ...generationConfig };
+      delete fallbackGen['thinkingConfig'];
+      data = await runGeminiRequest({ ...payload, generationConfig: fallbackGen });
+    }
 
     const firstCandidate = data['candidates']?.[0];
     if (!firstCandidate) {

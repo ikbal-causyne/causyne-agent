@@ -94,6 +94,6 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'permission.json'), 'utf8')).outcome, { outcome: 'selected', optionId: 'once' });
     const session = JSON.parse(fs.readFileSync(path.join(root, 'session.json'), 'utf8'));
     assert.equal(fs.realpathSync(session.cwd), fs.realpathSync(root));
-    assert.deepEqual(session.mcpServers, mcpServers);
+    assert.deepEqual(session.mcpServers, [{ name: 'fixture', command: 'fixture-server', args: [], env: [] }]);
   } finally { await peer.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

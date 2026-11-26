@@ -269,8 +269,8 @@ test('buildTurnRailCells renders consecutive compact vertical pill track when co
   assert.equal(result.cells.length, 35);
   assert.equal(result.layout.dotRows.size, 8);
 
-  // Consecutive vertical track centered or upper-aligned matching canonical design
-  const startRow = Math.max(0, Math.floor((35 - 8) / 3));
+  // Consecutive vertical track centered in viewport
+  const startRow = Math.max(0, Math.floor((35 - 8) / 2));
   for (let i = 0; i < 8; i++) {
     const expectedRow = startRow + i;
     assert.equal(result.layout.dotRows.get(i + 1), expectedRow);
@@ -470,7 +470,7 @@ test('handleTurnRailMouse permits read-only hover previews while host is busy', 
   assert.equal(scheduled, true);
 });
 
-test('buildTurnRailCells aligns single-turn dot with promptRow across short and scrolled transcripts and keeps rowToTurn precedence on dense rails', () => {
+test('buildTurnRailCells centers single-turn dot vertically across short and scrolled transcripts, renders centered overflow chevrons, and keeps rowToTurn precedence on dense rails', () => {
   const shortSingleTurn = [{
     turnIndex: 1,
     totalTurns: 1,
@@ -484,16 +484,16 @@ test('buildTurnRailCells aligns single-turn dot with promptRow across short and 
     transcriptHeight: 14
   }];
   const shortRes = buildTurnRailCells(shortSingleTurn, 75, 1, null, 0);
-  assert.equal(shortRes.layout.dotRows.get(1), (75 - 14) + 1);
+  assert.equal(shortRes.layout.dotRows.get(1), Math.floor((75 - 1) / 2), 'single turn stays vertically centered in 75-row viewport');
 
   const longSingleTurn = [{
     ...shortSingleTurn[0]!,
     transcriptHeight: 90
   }];
   const topViewRes = buildTurnRailCells(longSingleTurn, 27, 1, null, 0);
-  assert.equal(topViewRes.layout.dotRows.get(1), 1, 'visible single promptRow aligns horizontally at row 1');
+  assert.equal(topViewRes.layout.dotRows.get(1), Math.floor((27 - 1) / 2), 'single turn stays vertically centered instead of anchoring to promptRow');
   const scrolledRes = buildTurnRailCells(longSingleTurn, 27, 1, null, 40);
-  assert.equal(scrolledRes.layout.dotRows.get(1), 0, 'scrolled past single prompt pins dot cleanly at row 0 instead of floating');
+  assert.equal(scrolledRes.layout.dotRows.get(1), Math.floor((27 - 1) / 2), 'scrolling transcript does not move centered left turn rail dot');
 
   // Dense history: 60 turns onto 12 rows where turn 2 is active and shares a cell with quiet turns
   const denseTurns = Array.from({ length: 60 }, (_, idx) => ({
@@ -511,6 +511,14 @@ test('buildTurnRailCells aligns single-turn dot with promptRow across short and 
   const denseRes = buildTurnRailCells(denseTurns, 12, activeTurn, null);
   const activeRow = denseRes.layout.dotRows.get(activeTurn)!;
   assert.equal(denseRes.layout.rowToTurn.get(activeRow), activeTurn, 'active dot click target must not be overwritten by colliding quiet dot');
+
+  // Tall viewport with dense history shows vertically centered track with muted ^ and v overflow chevrons
+  const tallDense = buildTurnRailCells(denseTurns, 40, 30, null);
+  const plainCells = tallDense.cells.map((c) => stripAnsi(c));
+  const upIdx = plainCells.indexOf('^');
+  const downIdx = plainCells.indexOf('v');
+  assert.ok(upIdx > 0 && upIdx < 15, `expected centered ^ chevron near upper middle, got row ${upIdx}`);
+  assert.ok(downIdx > 25 && downIdx < 39, `expected centered v chevron near lower middle, got row ${downIdx}`);
 });
 
 

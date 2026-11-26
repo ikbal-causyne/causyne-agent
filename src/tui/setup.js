@@ -88,23 +88,23 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
                 known = [];
             }
             if (known.length === 0) {
-                model = await text('Setup 3/5 · model', ['Enter a model ID published by the installed CLI.',
+                model = await text('Setup 2/5 · model', ['Enter a model ID published by the installed CLI.',
                     'Leave the default to let the peer choose its own model.'], suggestedModel, false, value => value ? null : 'A model ID is required.');
             }
             else {
-                const picked = await ui.select({ title: 'Setup 3/5 · model', items: [
+                const picked = await ui.select({ title: 'Setup 2/5 · model', items: [
                         ...known.map((id) => ({ id, label: id, description: provider.label })),
                         { id: '__custom__', label: 'Other model ID…', description: 'enter one manually' }
                     ] });
                 if (!picked)
                     return null;
                 model = picked.id === '__custom__'
-                    ? await text('Setup 3/5 · model', ['Enter the model ID published by the installed CLI.'], suggestedModel, false, value => value ? null : 'A model ID is required.')
+                    ? await text('Setup 2/5 · model', ['Enter the model ID published by the installed CLI.'], suggestedModel, false, value => value ? null : 'A model ID is required.')
                     : picked.id;
             }
         }
         else {
-            model = await text('Setup 3/5 · model', ['Enter the model ID supported by your provider.'], suggestedModel, false, value => value ? null : 'A model ID is required.');
+            model = await text('Setup 2/5 · model', ['Enter the model ID supported by your provider.'], suggestedModel, false, value => value ? null : 'A model ID is required.');
         }
         if (model === null)
             return null;

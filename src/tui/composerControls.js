@@ -1,5 +1,7 @@
 import { loadConfig, saveConfig } from '../config.js';
-import { getAvailableProvidersOverview } from '../dynamicCatalogue.js';
+import { getAvailableProvidersOverview, getLiveAntigravityModels, getModelVariantsForPeer } from '../dynamicCatalogue.js';
+import { resolveModelVariants } from '../modelVariants.js';
+import { isAcpProvider } from '../providers/acp.js';
 import { writeClipboardSync } from './clipboardSync.js';
 import { SelectLayer } from './dialogs.js';
 import { looksSensitive } from './history.js';
@@ -52,28 +54,117 @@ export function availableModelVariants(config) {
         ?? [];
     return advertised.filter(model => splitModelVariant(model)?.base === parsed.base);
 }
-export function openVariantControl(prompt) {
+export function cycleModeControl(prompt, loop) {
     const config = loadConfig();
-    const variants = availableModelVariants(config);
-    if (variants.length < 2) {
-        prompt.notice = 'This provider has no advertised model variants';
+    const order = ['A', 'B', 'C'];
+    const current = String(loop?.config?.autonomyMode || config.autonomyMode || 'B').toUpperCase();
+    const idx = order.indexOf(current);
+    const next = order[(idx + 1) % order.length];
+    config.autonomyMode = next;
+    saveConfig(config);
+    loop.setAutonomyMode(next);
+    prompt.renderer?.status?.setSession?.({ autonomyMode: next });
+    prompt.surface?.setSessionInfo?.({ autonomyMode: next });
+    const labels = { A: 'Ask', B: 'Balanced', C: 'Autonomous' };
+    prompt.notice = `Mode ${next} · ${labels[next]} (Shift+Tab cycle · Ctrl+G menu)`;
+    prompt.scheduleDraw();
+}
+function resolveVariantSpecForControl(config, loop) {
+    const provider = typeof config.provider === 'string' ? config.provider.trim() : '';
+    const model = typeof config.model === 'string' ? config.model.trim() : '';
+    const liveAcpVariant = typeof loop?.llm?.getLiveVariantOption === 'function'
+        ? loop.llm.getLiveVariantOption()
+        : null;
+    let ollamaSupportsThinking = null;
+    if (provider.toLowerCase() === 'ollama' && loop?.llm) {
+        const metaCache = loop.llm._modelMetaCache;
+        const cachedMeta = metaCache?.get(model);
+        if (cachedMeta && typeof cachedMeta.supportsThinking === 'boolean') {
+            ollamaSupportsThinking = cachedMeta.supportsThinking;
+        }
+    }
+    const providerLower = provider.toLowerCase();
+    const liveAgyModels = (providerLower.includes('antigravity') || providerLower === 'agy')
+        ? getLiveAntigravityModels(config)
+        : undefined;
+    const peerModelVariants = isAcpProvider(provider)
+        ? getModelVariantsForPeer(provider, model, config)
+        : undefined;
+    return resolveModelVariants({
+        provider,
+        model,
+        currentVariant: typeof config.reasoningEffort === 'string' ? config.reasoningEffort : null,
+        liveAcpVariant,
+        peerModelVariants,
+        ollamaSupportsThinking,
+        availableAgyModels: liveAgyModels && liveAgyModels.length > 0 ? liveAgyModels : undefined
+    });
+}
+export function cycleVariantControl(prompt, loop) {
+    const config = loadConfig();
+    const spec = resolveVariantSpecForControl(config, loop);
+    if (!spec.supported || spec.options.length === 0) {
+        prompt.notice = spec.note || 'Active model does not expose tunable reasoning variants';
         prompt.scheduleDraw();
         return;
     }
-    const provider = typeof config.provider === 'string' ? config.provider.trim() : '';
+    const cycleValues = spec.source === 'agy_models'
+        ? spec.options.map((o) => o.id)
+        : [...spec.options.map((o) => o.id), 'auto'];
+    const currentId = (typeof config.reasoningEffort === 'string' && config.reasoningEffort.trim())
+        ? config.reasoningEffort.trim().toLowerCase()
+        : (spec.source === 'agy_models' && spec.currentVariant ? spec.currentVariant.toLowerCase() : 'auto');
+    const currentIdx = cycleValues.findIndex((v) => v.toLowerCase() === currentId);
+    const nextIdx = (currentIdx + 1) % cycleValues.length;
+    const nextVal = cycleValues[nextIdx];
+    prompt.deliver(`/variant ${nextVal}`);
+    const positionLabel = nextVal === 'auto'
+        ? 'auto (default)'
+        : `${nextVal} (${nextIdx + 1}/${spec.options.length})`;
+    prompt.notice = `Variant: ${positionLabel} · Ctrl+T cycle · Alt+T list`;
+    prompt.scheduleDraw();
+}
+export function openVariantControl(prompt, loop) {
+    const config = loadConfig();
+    const spec = resolveVariantSpecForControl(config, loop);
+    if (!spec.supported || spec.options.length === 0) {
+        prompt.notice = spec.note || 'Active model does not expose tunable reasoning variants';
+        prompt.scheduleDraw();
+        return;
+    }
+    const sourceLabel = spec.source === 'acp_live'
+        ? 'ACP Live'
+        : (spec.source === 'peer_catalogue'
+            ? 'Peer Catalogue'
+            : (spec.source === 'agy_models' ? 'Antigravity' : (spec.source === 'ollama_live' ? 'Ollama Local' : 'Detected')));
+    const items = [
+        ...spec.options.map((opt) => {
+            const isActive = Boolean(spec.currentVariant && opt.id.toLowerCase() === spec.currentVariant.toLowerCase());
+            return {
+                id: opt.id,
+                label: `${isActive ? '● ' : '  '}${opt.label} (${opt.id})`,
+                description: opt.description,
+                category: `${spec.model || spec.provider} — ${sourceLabel}`,
+                value: opt.id
+            };
+        }),
+        {
+            id: 'auto',
+            label: `${!spec.currentVariant ? '● ' : '  '}Auto (model default)`,
+            description: spec.defaultVariant ? `Use model default (${spec.defaultVariant})` : 'Reset explicit variant override',
+            category: 'Reset',
+            value: 'auto'
+        }
+    ];
     prompt.openLayer(new SelectLayer({
-        title: 'Model variant',
-        items: variants.map(model => ({
-            id: model,
-            label: `${model}${model === config.model ? '  (active)' : ''}`,
-            description: provider,
-            value: model
-        })),
+        title: `Variant · ${spec.model || spec.provider || 'Model'}`,
+        items,
+        showFilter: items.length > 6,
         onPick: (item) => {
-            if (!item?.value || item.value === config.model)
+            if (!item?.value)
                 return;
-            prompt.deliver(provider ? `/model ${provider}/${item.value}` : `/model ${item.value}`);
-            prompt.notice = 'Model variant change queued';
+            prompt.deliver(`/variant ${item.value}`);
+            prompt.notice = item.value === 'auto' ? 'Variant reset to auto' : `Variant set to ${item.value}`;
             prompt.scheduleDraw();
         }
     }));

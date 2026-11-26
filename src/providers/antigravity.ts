@@ -751,6 +751,7 @@ export function mapNativeToolToCausyne(
 export class AntigravityProvider extends LLMProvider {
   command: string;
   printTimeout: string;
+  reasoningEffort: string | null = null;
   persistentWorkerEnabled: boolean;
   currentConversationId: string | null = null;
   lastTaskId: string | null = null;
@@ -769,6 +770,8 @@ export class AntigravityProvider extends LLMProvider {
     const candidate = config.model;
     this.model = (candidate && isAntigravityModel(candidate)) ? candidate : 'Gemini 3.8 Flash (Low)';
     this.command = config.command || resolveAgyBinary();
+    const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+    this.reasoningEffort = rawEffort || null;
     this.printTimeout = typeof config.printTimeout === 'string' && config.printTimeout.trim()
       ? config.printTimeout.trim()
       : '1800s';
@@ -1068,7 +1071,10 @@ export class AntigravityProvider extends LLMProvider {
     }
 
     const modelSlug = resolveAgyModelId(this.model);
-    const effort = resolveAgyEffort(this.model);
+    const explicitEffort = this.reasoningEffort && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(this.reasoningEffort)
+      ? this.reasoningEffort
+      : null;
+    const effort = explicitEffort || resolveAgyEffort(this.model);
 
     // Run the user's normal peer in the selected project. Do not substitute a
     // managed inference profile or hide project MCPs, skills, and instructions.
@@ -1085,7 +1091,7 @@ export class AntigravityProvider extends LLMProvider {
       modelSlug
     ];
 
-    if (effort && (modelSlug.endsWith(`-${effort}`) || /-(low|medium|high|xhigh|max)$/i.test(modelSlug))) {
+    if (effort && (Boolean(explicitEffort) || modelSlug.endsWith(`-${effort}`) || /-(low|medium|high|xhigh|max|ultra)$/i.test(modelSlug))) {
       args.push('--effort', effort);
     }
 

@@ -7,7 +7,7 @@ import { isPhysicalPathAllowed } from '../agent/workspaceBoundary.js';
 import { isCredentialPath } from '../sandbox.js';
 import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { resolveWindowsSpawnTarget } from '../utils/winSpawn.js';
-import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, extractAcpSessionModels, isJsonRpcRequest, isJsonRpcResponse, isJsonRpcNotification } from './protocol.js';
+import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, extractAcpSessionModels, extractAcpSessionVariants, isJsonRpcRequest, isJsonRpcResponse, isJsonRpcNotification, normalizeAcpMcpServers } from './protocol.js';
 function createAbortError(message = 'ACP operation aborted by user') {
     const err = new Error(message);
     err.name = 'AbortError';
@@ -38,6 +38,8 @@ export class AcpClient {
         modelLabels: {},
         usesConfigOption: false
     };
+    sessionVariants = new Map();
+    latestSessionVariants = null;
     constructor(options) {
         this.options = options;
     }
@@ -83,7 +85,37 @@ export class AcpClient {
             configOptionId: this.latestSessionModels.configOptionId
         };
     }
+    getSessionVariants(sessionId) {
+        const src = sessionId ? (this.sessionVariants.get(sessionId) ?? null) : this.latestSessionVariants;
+        if (!src)
+            return null;
+        return {
+            configOptionId: src.configOptionId,
+            ...(src.currentValue ? { currentValue: src.currentValue } : {}),
+            options: src.options.map((o) => ({ ...o }))
+        };
+    }
     recordSessionModels(sessionId, payload) {
+        const extractedVariant = extractAcpSessionVariants(payload);
+        if (extractedVariant) {
+            const existingVar = this.sessionVariants.get(sessionId);
+            const mergedVar = {
+                configOptionId: extractedVariant.configOptionId || existingVar?.configOptionId || 'thought_level',
+                ...(extractedVariant.currentValue
+                    ? { currentValue: extractedVariant.currentValue }
+                    : (existingVar?.currentValue ? { currentValue: existingVar.currentValue } : {})),
+                options: extractedVariant.options.length > 0
+                    ? extractedVariant.options
+                    : (existingVar?.options ?? [])
+            };
+            if (!this.sessionVariants.has(sessionId) && this.sessionVariants.size >= MAX_TRACKED_SESSIONS) {
+                const oldest = this.sessionVariants.keys().next().value;
+                if (oldest !== undefined)
+                    this.sessionVariants.delete(oldest);
+            }
+            this.sessionVariants.set(sessionId, mergedVar);
+            this.latestSessionVariants = mergedVar;
+        }
         const extracted = extractAcpSessionModels(payload);
         if (extracted.availableModels.length === 0 && !extracted.currentModelId && !extracted.usesConfigOption) {
             return;
@@ -192,7 +224,7 @@ export class AcpClient {
         }
         const result = await this.request(ACP_METHODS.NEW_SESSION, {
             cwd,
-            mcpServers
+            mcpServers: normalizeAcpMcpServers(mcpServers)
         }, 30_000, signal);
         if (!result || typeof result.sessionId !== 'string' || !result.sessionId.trim() || result.sessionId.includes('\0')) {
             throw new Error('agent did not return a session id');
@@ -241,6 +273,24 @@ export class AcpClient {
                 return;
             }
             throw err;
+        }
+    }
+    async setSessionConfigOption(sessionId, configId, value, signal) {
+        if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.includes('\0')
+            || typeof configId !== 'string' || !configId.trim() || configId.includes('\0')
+            || typeof value !== 'string' || !value.trim() || value.includes('\0')) {
+            throw new Error('setSessionConfigOption requires non-empty sessionId, configId, and value');
+        }
+        const res = await this.request(ACP_METHODS.SET_CONFIG_OPTION, {
+            sessionId,
+            configId: configId.trim(),
+            value: value.trim()
+        }, 20_000, signal);
+        this.recordSessionModels(sessionId, res);
+        const tracked = this.sessionVariants.get(sessionId);
+        if (tracked && tracked.configOptionId === configId.trim()) {
+            tracked.currentValue = value.trim();
+            this.latestSessionVariants = tracked;
         }
     }
     async setSessionMode(sessionId, modeId, signal) {

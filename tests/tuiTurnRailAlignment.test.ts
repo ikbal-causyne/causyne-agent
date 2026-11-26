@@ -5,7 +5,7 @@ import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 import { renderTurnPreviewCard, overlayTurnPreviewCard } from '../src/tui/turnRail.js';
 
-test('turn rail dots stay anchored to the bottom-aligned transcript in a full-height session instead of floating in upper empty space', () => {
+test('turn rail dots stay vertically centered in the viewport instead of following the bottom-aligned message row', () => {
   const out = {
     columns: 193,
     rows: 78,
@@ -26,12 +26,14 @@ test('turn rail dots stay anchored to the bottom-aligned transcript in a full-he
 
     surface.present(['   ┃ try "review"', '   Build C'], { row: 0, col: 4 });
 
-    const plainRows = surface.stage.prev.map((r: string) => stripAnsi(r));
-    const userRowIdx = plainRows.findIndex((r: string) => r.includes('hi'));
-    const dotRowIdx = plainRows.findIndex((r: string) => r.includes('●'));
+    const vpRows = surface.stage.prev.slice(0, surface.viewport.height).map((r: string) => stripAnsi(r));
+    const userRowIdx = vpRows.findIndex((r: string) => r.includes('hi'));
+    const dotRowIdx = vpRows.findIndex((r: string) => r.includes('●'));
+    const expectedCenter = Math.floor((surface.viewport.height - 1) / 2);
 
     assert.ok(userRowIdx > 40, `Expected bottom-aligned user message near bottom of 77-row stage, got row ${userRowIdx}`);
-    assert.ok(dotRowIdx >= userRowIdx - 1, `Expected turn rail dot ● near bottom-aligned transcript (row >= ${userRowIdx - 1}), but found floating at row ${dotRowIdx}`);
+    assert.equal(dotRowIdx, expectedCenter, `Expected turn rail dot ● vertically centered at row ${expectedCenter}, got row ${dotRowIdx}`);
+    assert.notEqual(dotRowIdx, userRowIdx, 'Left turn rail dot must stay centered rather than following the message row');
   } finally {
     surface.close();
   }
@@ -109,7 +111,7 @@ test('overlayTurnPreviewCard keeps right overview rail aligned at rowLen - 1 and
   }
 });
 
-test('single-turn left dot and right overview marker share exact prompt row, narrow resize clears turnRailLayout, and new user turns clear stale activeTurnIndex', () => {
+test('single-turn left dot stays vertically centered independent of prompt row, narrow resize clears turnRailLayout, and new user turns clear stale activeTurnIndex', () => {
   const out = {
     columns: 187,
     rows: 78,
@@ -133,13 +135,15 @@ test('single-turn left dot and right overview marker share exact prompt row, nar
     const mainW = surface.composeAvailableWidth();
     const vpRows = surface.stage.prev.slice(0, surface.viewport.height).map((r: string) => stripAnsi(r));
     const userRowIdx = vpRows.findIndex((r: string) => r.includes('g') && /[┃|]/.test(r));
+    const expectedCenter = Math.floor((surface.viewport.height - 1) / 2);
     assert.ok(userRowIdx > 40, `expected bottom-aligned user prompt row, got ${userRowIdx}`);
-    assert.equal(vpRows[userRowIdx]?.[1], '●', `left turn rail dot must sit on exact user prompt row ${userRowIdx}`);
+    assert.equal(vpRows[expectedCenter]?.[1], '●', `left turn rail dot must sit vertically centered at row ${expectedCenter}`);
+    assert.notEqual(vpRows[userRowIdx]?.[1], '●', `left turn rail dot must not anchor beside message row ${userRowIdx}`);
     assert.notEqual(vpRows[userRowIdx]?.[mainW - 2]?.trim(), '', `right overview marker must align on exact user prompt row ${userRowIdx}`);
 
     // Shrinking below rail threshold clears stale turnRailLayout and hover card state
     surface.hoveredTurnIndex = 1;
-    surface.hoveredTurnAnchorY = userRowIdx;
+    surface.hoveredTurnAnchorY = expectedCenter;
     out.columns = 50;
     surface.resize();
     surface.present(['   ┃ prompt', '   Build C'], { row: 0, col: 4 });

@@ -18,6 +18,7 @@ export interface OllamaModelMeta {
   parameterCount?: number | undefined;
   supportsTools?: boolean | undefined;
   supportsVision?: boolean | undefined;
+  supportsThinking?: boolean | undefined;
   fetchedAt: number;
 }
 
@@ -130,6 +131,7 @@ function parsePositiveCtx(value: unknown): number | null {
 
 export class OllamaProvider extends LLMProvider {
   allowInsecureHttp: boolean;
+  reasoningEffort: string | null;
   configuredNumCtx: number | null;
   contextWindow: number;
 
@@ -150,6 +152,8 @@ export class OllamaProvider extends LLMProvider {
     }
     this.baseUrl = resolvedUrl;
     this.allowInsecureHttp = config.allowInsecureHttp === true;
+    const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+    this.reasoningEffort = rawEffort || null;
     this.configuredNumCtx = parsePositiveCtx(config['numCtx']) ?? parsePositiveCtx(process.env.OLLAMA_NUM_CTX);
     this.contextWindow = this.configuredNumCtx ?? 16_384;
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['ollama']) || '');
@@ -198,6 +202,7 @@ export class OllamaProvider extends LLMProvider {
         parameterCount: parseParameterCount(data),
         supportsTools: caps.length > 0 ? caps.includes('tools') : undefined,
         supportsVision: caps.length > 0 ? caps.includes('vision') : undefined,
+        supportsThinking: caps.length > 0 ? caps.includes('thinking') : undefined,
         fetchedAt: Date.now()
       };
       ollamaMetaCache.set(cacheKey, meta);
@@ -291,6 +296,22 @@ export class OllamaProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
+    let thinkParam: boolean | string | undefined;
+    if (this.reasoningEffort) {
+      const loweredModel = (this.model || '').toLowerCase();
+      if (loweredModel.includes('gpt-oss')) {
+        if (['low', 'medium', 'high'].includes(this.reasoningEffort)) {
+          thinkParam = this.reasoningEffort;
+        }
+      } else if (meta?.supportsThinking !== false && (meta?.supportsThinking === true || /qwen3|qwen-3|deepseek-r1|qwq|magistral|cogito/i.test(loweredModel))) {
+        if (this.reasoningEffort === 'off' || this.reasoningEffort === 'none') {
+          thinkParam = false;
+        } else {
+          thinkParam = true;
+        }
+      }
+    }
+
     const buildPayload = (useNativeTools: boolean): Record<string, any> => ({
       model: this.model,
       messages: !useNativeTools && hasTools
@@ -299,6 +320,7 @@ export class OllamaProvider extends LLMProvider {
       stream: false,
       keep_alive: '10m',
       options: ollamaOptions,
+      ...(thinkParam !== undefined ? { think: thinkParam } : {}),
       ...(useNativeTools && adaptedTools ? { tools: adaptedTools } : {}),
       ...(options.jsonMode ? { format: 'json' } : {})
     });
