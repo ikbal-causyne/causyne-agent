@@ -34,7 +34,9 @@ export async function stopGuiServer() {
 function normalizeWorkspacePath(dir) {
     const resolved = path.resolve(dir);
     try {
-        return fs.realpathSync(resolved);
+        return typeof fs.realpathSync.native === 'function'
+            ? fs.realpathSync.native(resolved)
+            : fs.realpathSync(resolved);
     }
     catch {
         return resolved;

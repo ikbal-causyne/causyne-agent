@@ -42,7 +42,10 @@ describe('CLI Public Release Readiness — /gui, Variant Pill, Shortcuts, Doctor
 
       const running = getGuiServerStatus();
       assert.equal(running.running, true);
-      assert.equal(running.workspaceRoot, fs.realpathSync(tmpWs));
+      const expectedRoot = typeof fs.realpathSync.native === 'function'
+        ? fs.realpathSync.native(tmpWs)
+        : fs.realpathSync(tmpWs);
+      assert.equal(running.workspaceRoot, expectedRoot);
 
       // Re-invoking on same workspace reuses the same port without spawning a second server
       const reuseRes = await runCommand('gui', ['--no-open'], {
