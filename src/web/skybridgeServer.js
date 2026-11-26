@@ -50,6 +50,8 @@ import { backgroundTaskManager } from '../backgroundTasks.js';
 import { causyneBrowser, expandSearchMacro } from '../browser/causyneBrowser.js';
 import { discoverLocalCdpTabs, importExplicitUserBrowserData, syncLocalCdpTabToCausyne } from './skybridgeBrowserBridge.js';
 import { CAUSYNE_BROWSER_MCP_NAME, handleBrowserMcpRpc } from './skybridgeBrowserMcp.js';
+import { DAILY_LIMIT_SUPPORT_MESSAGE, EntitlementAccessError, EntitlementClient } from '../licensing/entitlements.js';
+import { LICENSE_ENFORCEMENT_ENABLED, isValidLicensePlan } from '../licensing/policy.js';
 import { renderSkybridgeHtml } from './skybridgeUi.js';
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const MAX_FILE_READ_BYTES = 512 * 1024;
@@ -1663,6 +1665,103 @@ export async function startSkybridgeServer(options = {}) {
                 });
                 return;
             }
+            if (req.method === 'GET' && pathname === '/api/license/status') {
+                const liveRequested = parsedUrl.searchParams.get('live') === '1';
+                const hasCustomClient = Boolean(options.entitlementClient);
+                if (!LICENSE_ENFORCEMENT_ENABLED && !hasCustomClient && !liveRequested) {
+                    sendJson(res, 200, {
+                        ok: true,
+                        enforcementEnabled: false,
+                        entitlement: 'free',
+                        plan: 'free',
+                        paidUntil: null,
+                        dailySeconds: 21_600,
+                        remainingSeconds: 21_600,
+                        resetsAt: null,
+                        recoveryCode: null,
+                        supportMessage: DAILY_LIMIT_SUPPORT_MESSAGE
+                    });
+                    return;
+                }
+                try {
+                    const client = options.entitlementClient ?? new EntitlementClient();
+                    const data = await client.status();
+                    sendJson(res, 200, {
+                        ok: true,
+                        enforcementEnabled: LICENSE_ENFORCEMENT_ENABLED,
+                        entitlement: typeof data?.entitlement === 'string' ? data.entitlement : 'free',
+                        plan: typeof data?.plan === 'string' ? data.plan : 'free',
+                        status: typeof data?.status === 'string' ? data.status : 'free',
+                        paidUntil: typeof data?.paidUntil === 'string' ? data.paidUntil : null,
+                        dailySeconds: typeof data?.dailySeconds === 'number' ? data.dailySeconds : null,
+                        remainingSeconds: typeof data?.remainingSeconds === 'number' ? data.remainingSeconds : null,
+                        resetsAt: typeof data?.resetsAt === 'string' ? data.resetsAt : null,
+                        recoveryCode: typeof data?.recoveryCode === 'string' ? data.recoveryCode : null,
+                        supportMessage: typeof data?.upgradeMessage === 'string' ? data.upgradeMessage : DAILY_LIMIT_SUPPORT_MESSAGE
+                    });
+                }
+                catch (err) {
+                    const msg = err instanceof EntitlementAccessError
+                        ? err.message
+                        : 'Unable to reach licensing service right now.';
+                    sendJson(res, 503, { ok: false, error: msg, enforcementEnabled: LICENSE_ENFORCEMENT_ENABLED });
+                }
+                return;
+            }
+            if (req.method === 'POST' && pathname === '/api/license/checkout') {
+                const body = await readJsonBody(req);
+                const plan = typeof body.plan === 'string' ? body.plan.trim() : '';
+                if (!isValidLicensePlan(plan)) {
+                    sendJson(res, 400, { error: 'Unknown Causyne plan.' });
+                    return;
+                }
+                try {
+                    const client = options.entitlementClient ?? new EntitlementClient();
+                    const result = await client.checkout(plan);
+                    auditLog.log({ event: 'skybridge_license_checkout', plan });
+                    sendJson(res, 200, { ok: true, plan, url: result.url });
+                }
+                catch (err) {
+                    const msg = err instanceof EntitlementAccessError
+                        ? err.message
+                        : 'Unable to start Paddle checkout right now. Visit https://causyne.com/pricing.html.';
+                    sendJson(res, 502, { ok: false, error: msg });
+                }
+                return;
+            }
+            if (req.method === 'POST' && pathname === '/api/license/recover') {
+                const body = await readJsonBody(req);
+                const code = typeof body.recoveryCode === 'string' ? body.recoveryCode.trim() : '';
+                try {
+                    const client = options.entitlementClient ?? new EntitlementClient();
+                    const result = await client.recover(code);
+                    auditLog.log({ event: 'skybridge_license_recover', ok: true });
+                    sendJson(res, 200, {
+                        ok: true,
+                        entitlement: result?.entitlement ?? 'pro',
+                        plan: result?.plan ?? 'monthly',
+                        paidUntil: result?.paidUntil ?? null
+                    });
+                }
+                catch (err) {
+                    const status = err instanceof EntitlementAccessError && err.code === 'INVALID_RECOVERY_CODE' ? 400 : 404;
+                    const msg = err instanceof EntitlementAccessError ? err.message : 'Could not link recovery code.';
+                    sendJson(res, status, { ok: false, error: msg });
+                }
+                return;
+            }
+            if (req.method === 'POST' && pathname === '/api/license/portal') {
+                try {
+                    const client = options.entitlementClient ?? new EntitlementClient();
+                    const result = await client.portal();
+                    sendJson(res, 200, { ok: true, url: result.url });
+                }
+                catch (err) {
+                    const msg = err instanceof EntitlementAccessError ? err.message : 'Billing portal unavailable.';
+                    sendJson(res, 502, { ok: false, error: msg });
+                }
+                return;
+            }
             if (req.method === 'POST' && pathname === '/api/doctor/probe') {
                 const report = await runZeroSpendByokProbe();
                 sendJson(res, 200, {
@@ -2405,6 +2504,13 @@ export async function startSkybridgeServer(options = {}) {
                                 taskId,
                                 sessionId: boundSession?.id || null,
                                 userStopped: true
+                            }));
+                        }
+                        else if (err instanceof EntitlementAccessError && err.code === 'DAILY_LIMIT_REACHED') {
+                            pushRunFrame(run, JSON.stringify({
+                                type: 'error',
+                                code: 'DAILY_LIMIT_REACHED',
+                                message: err.message || DAILY_LIMIT_SUPPORT_MESSAGE
                             }));
                         }
                         else {

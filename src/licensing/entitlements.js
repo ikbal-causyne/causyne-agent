@@ -10,6 +10,11 @@ const USER_AGENT = 'Causyne-Agent/entitlements-v1';
 const AUTH_TIMEOUT_MS = 10000;
 const MAX_IDENTITY_BYTES = 64 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RECOVERY_CODE_RE = /^CSYN-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+export const DAILY_LIMIT_SUPPORT_MESSAGE = "You have used today's 6-hour free Causyne allowance (resets at 00:00 UTC). "
+    + 'Upgrade to Causyne Pro for unlimited daily usage — your subscription directly supports '
+    + 'an independent developer, ongoing maintenance, and making Causyne Agent better for the '
+    + 'entire community. Thank you for considering an upgrade, and thank you for your trust and support.';
 export class EntitlementAccessError extends Error {
     code;
     constructor(code, message) {
@@ -363,6 +368,33 @@ export class EntitlementClient {
         }
         return result;
     }
+    async recover(recoveryCode) {
+        const normalized = typeof recoveryCode === 'string'
+            ? recoveryCode.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '')
+            : '';
+        if (!RECOVERY_CODE_RE.test(normalized)) {
+            throw new EntitlementAccessError('INVALID_RECOVERY_CODE', 'Recovery code must match CSYN-XXXX-XXXX-XXXX-XXXX.');
+        }
+        return this.call('/v1/recovery/claim', { recoveryCode: normalized });
+    }
+    async portal() {
+        const result = await this.call('/v1/portal', {});
+        if (typeof result?.url !== 'string' || !result.url.trim()) {
+            throw new EntitlementAccessError('BAD_PORTAL_URL', 'Invalid billing portal URL returned by server.');
+        }
+        let url;
+        try {
+            url = new URL(result.url);
+        }
+        catch {
+            throw new EntitlementAccessError('BAD_PORTAL_URL', 'Invalid billing portal URL returned by server.');
+        }
+        const host = url.hostname.toLowerCase();
+        if (url.protocol !== 'https:' || url.username || url.password || url.port || !isAllowedCheckoutHost(host)) {
+            throw new EntitlementAccessError('BAD_PORTAL_URL', 'Invalid billing portal URL returned by server.');
+        }
+        return result;
+    }
 }
 /** Process-local gate. All AgentLoop instances in this process share one session. */
 export class EntitlementGate {
@@ -497,16 +529,21 @@ export async function runLicenseCommand(action = 'status', plan = '') {
     }
     const client = new EntitlementClient();
     if (normalizedAction === 'plans') {
-        console.log('Causyne Go plans: monthly, annual, two_month_pass, two_year_pass');
-        console.log('Paid access does not include paid model inference.');
-        console.log('One-time passes are non-recurring; pricing is shown at merchant checkout.');
+        console.log('Causyne Pro plans: monthly ($12/mo), annual ($99/yr), two_month_pass ($22), two_year_pass ($179)');
+        console.log('Free tier includes 6 hours/day of active agent execution (resets 00:00 UTC).');
+        console.log('Paid access covers Causyne software only and does not include third-party LLM inference.');
+        console.log('Your subscription directly supports independent development and maintenance for the Causyne community.');
         return;
     }
     if (normalizedAction === 'status') {
         const data = await client.status();
         console.log(`Causyne software entitlement: ${safeDisplay(data.entitlement ?? 'unknown')}`);
-        if (data.paidUntil)
+        if (data.paidUntil) {
             console.log(`Paid through: ${safeDisplay(data.paidUntil)}`);
+            if (typeof data.recoveryCode === 'string' && data.recoveryCode.trim()) {
+                console.log(`Recovery code (save for other devices): ${safeDisplay(data.recoveryCode)}`);
+            }
+        }
         else {
             const remSec = typeof data.remainingSeconds === 'number' && Number.isFinite(data.remainingSeconds) && data.remainingSeconds > 0
                 ? data.remainingSeconds
@@ -516,6 +553,9 @@ export async function runLicenseCommand(action = 'status', plan = '') {
                 : 0;
             console.log(`Free allowance remaining: ${Math.floor(remSec / 60)} of ${Math.floor(daySec / 60)} minutes`);
             console.log(`UTC reset: ${safeDisplay(data.resetsAt ?? 'unknown')}`);
+            if (remSec === 0) {
+                console.log(safeDisplay(typeof data.upgradeMessage === 'string' ? data.upgradeMessage : DAILY_LIMIT_SUPPORT_MESSAGE));
+            }
         }
         console.log('Model-provider inference has separate limits and costs.');
         return;
@@ -526,5 +566,15 @@ export async function runLicenseCommand(action = 'status', plan = '') {
         console.log('Your entitlement activates only after the provider confirms payment.');
         return;
     }
-    throw new EntitlementAccessError('UNKNOWN_COMMAND', 'Use: causyne license status | plans | buy <plan>.');
+    if (normalizedAction === 'recover') {
+        const result = await client.recover(normalizedPlan);
+        console.log(`License linked: ${safeDisplay(result.plan ?? 'pro')} (paid through ${safeDisplay(result.paidUntil ?? 'active')})`);
+        return;
+    }
+    if (normalizedAction === 'portal') {
+        const result = await client.portal();
+        console.log(`Billing portal: ${safeDisplay(result.url)}`);
+        return;
+    }
+    throw new EntitlementAccessError('UNKNOWN_COMMAND', 'Use: causyne license status | plans | buy <plan> | recover <code> | portal.');
 }

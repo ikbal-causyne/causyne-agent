@@ -940,4 +940,118 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       fs.rmSync(tmpWs, { recursive: true, force: true });
     }
   });
+
+  test('Skybridge exposes authenticated license status, Paddle checkout, recovery, portal, and DAILY_LIMIT_REACHED chat banner', async () => {
+    const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-skybridge-license-ui-'));
+    let linkedPro = false;
+    const handle = await startSkybridgeServer({
+      workspaceRoot: tmpWs,
+      port: 0,
+      entitlementClient: {
+        async status() {
+          if (linkedPro) {
+            return {
+              entitlement: 'pro',
+              plan: 'monthly',
+              status: 'active',
+              paidUntil: '2027-01-01T00:00:00.000Z',
+              recoveryCode: 'CSYN-ABCD-EFGH-JKLM-2345'
+            };
+          }
+          return {
+            entitlement: 'free',
+            plan: 'free',
+            status: 'free',
+            paidUntil: null,
+            dailySeconds: 21600,
+            remainingSeconds: 1800,
+            resetsAt: '2026-11-27T00:00:00.000Z',
+            upgradeMessage: 'Upgrade to Causyne Pro for unlimited daily usage — thank you for your trust and support.'
+          };
+        },
+        async checkout(plan: string) {
+          return { plan, url: `https://sandbox-checkout.paddle.com/checkout/${plan}` };
+        },
+        async recover(code: string) {
+          if (code !== 'CSYN-ABCD-EFGH-JKLM-2345') {
+            throw new EntitlementAccessError('INVALID_RECOVERY_CODE', 'Invalid recovery code.');
+          }
+          linkedPro = true;
+          return { entitlement: 'pro', plan: 'monthly', paidUntil: '2027-01-01T00:00:00.000Z' };
+        },
+        async portal() {
+          return { url: 'https://sandbox-customer-portal.paddle.com/cpl_test' };
+        }
+      },
+      loopFactory: () => ({
+        async run() {
+          throw new EntitlementAccessError(
+            'DAILY_LIMIT_REACHED',
+            'You have used today’s 6-hour free Causyne allowance. Upgrade to Causyne Pro to support development.'
+          );
+        }
+      })
+    });
+
+    const authHeaders = { Authorization: `Bearer ${handle.token}` };
+    try {
+      const st0 = await fetch(`${handle.origin}/api/license/status`, { headers: authHeaders }).then((r) => r.json()) as any;
+      assert.equal(st0.ok, true);
+      assert.equal(st0.entitlement, 'free');
+      assert.equal(st0.dailySeconds, 21600);
+      assert.equal(st0.remainingSeconds, 1800);
+
+      const badPlan = await fetch(`${handle.origin}/api/license/checkout`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: 'invalid_plan' })
+      });
+      assert.equal(badPlan.status, 400);
+
+      const okCheckout = await fetch(`${handle.origin}/api/license/checkout`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: 'annual' })
+      });
+      assert.equal(okCheckout.status, 200);
+      const coJson = await okCheckout.json() as any;
+      assert.equal(coJson.url, 'https://sandbox-checkout.paddle.com/checkout/annual');
+
+      const badRec = await fetch(`${handle.origin}/api/license/recover`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recoveryCode: 'BAD' })
+      });
+      assert.equal(badRec.status, 400);
+
+      const okRec = await fetch(`${handle.origin}/api/license/recover`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recoveryCode: 'CSYN-ABCD-EFGH-JKLM-2345' })
+      });
+      assert.equal(okRec.status, 200);
+      const stPro = await fetch(`${handle.origin}/api/license/status`, { headers: authHeaders }).then((r) => r.json()) as any;
+      assert.equal(stPro.entitlement, 'pro');
+
+      const portalRes = await fetch(`${handle.origin}/api/license/portal`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      assert.equal(portalRes.status, 200);
+      assert.equal(((await portalRes.json()) as any).url, 'https://sandbox-customer-portal.paddle.com/cpl_test');
+
+      // Chat stream propagates DAILY_LIMIT_REACHED code & friendly message cleanly
+      const chatText = await fetch(`${handle.origin}/api/chat`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: 'Hello' })
+      }).then((r) => r.text());
+      assert.match(chatText, /"code":"DAILY_LIMIT_REACHED"/);
+      assert.match(chatText, /Upgrade to Causyne Pro/i);
+    } finally {
+      await handle.close();
+      fs.rmSync(tmpWs, { recursive: true, force: true });
+    }
+  });
 });
