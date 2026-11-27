@@ -46,6 +46,7 @@ export function classifyAgentError(error: unknown): AgentErrorClass {
   // A provider may have charged for completed steps before the turn failed.
   // Replaying that turn can repeat actions and spend the same tokens again.
   const posTokens = (v: unknown): number => {
+    if (typeof v !== 'number' && typeof v !== 'string') return 0;
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
