@@ -2,6 +2,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 const DNS_CACHE_MS = 5 * 60_000;
+const MAX_DNS_CACHE_ENTRIES = 512;
 const hostCache = new Map<string, { expiresAt: number; addresses: string[] }>();
 
 function isPrivateIpv4(address: string): boolean {
@@ -72,7 +73,17 @@ async function resolvedAddresses(hostname: string): Promise<string[]> {
   if (cached && cached.expiresAt > Date.now()) return cached.addresses;
   const results = await lookup(hostname, { all: true, verbatim: true });
   const addresses = [...new Set(results.map(result => result.address))];
-  hostCache.set(hostname, { expiresAt: Date.now() + DNS_CACHE_MS, addresses });
+  const now = Date.now();
+  for (const [key, value] of hostCache) {
+    if (value.expiresAt <= now) hostCache.delete(key);
+  }
+  hostCache.delete(hostname);
+  while (hostCache.size >= MAX_DNS_CACHE_ENTRIES) {
+    const oldest = hostCache.keys().next();
+    if (oldest.done) break;
+    hostCache.delete(oldest.value);
+  }
+  hostCache.set(hostname, { expiresAt: now + DNS_CACHE_MS, addresses });
   return addresses;
 }
 
