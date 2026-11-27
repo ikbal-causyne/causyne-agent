@@ -19,8 +19,7 @@
 //      goes to Commander so Commander can report it, exactly as it does today.
 //   2. `--` ends the scan. Anything after it is operands, not a command path.
 //
-// Modelled on openclaw's getRootOptionAwareCommandPath, which exists for the
-// same reason: `openclaw --profile foo` must still launch the TUI.
+// Ensures bare root options like `--profile foo` still launch the TUI cleanly.
 
 /**
  * Root options, and how many argv slots each consumes AFTER itself.

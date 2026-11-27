@@ -1,7 +1,7 @@
 /**
  * Causyne Agent — Transactional Multi-File Patch Engine (`apply_patch`)
  *
- * Applies Codex-style multi-file V4A patches (`*** Begin Patch` ... `*** End Patch`)
+ * Applies multi-file V4A patches (`*** Begin Patch` ... `*** End Patch`)
  * atomically across multiple files in a single tool call:
  *   - `*** Add File: <path>`
  *   - `*** Update File: <path>` (with optional `*** Move to: <newPath>`)

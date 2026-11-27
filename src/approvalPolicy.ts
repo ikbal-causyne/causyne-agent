@@ -1,20 +1,48 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import {
+  normalizePermissionPreset,
+  presetToAutonomyMode,
+  resolveConfigPermissionPreset,
+  type PermissionPresetId
+} from './permissionPresets.js';
 
 export type AutonomyMode = 'A' | 'B' | 'C' | string;
 
 const toolAutonomy = new AsyncLocalStorage<AutonomyMode>();
+const toolPreset = new AsyncLocalStorage<PermissionPresetId>();
 
-/** Session-scoped context for legacy tools whose execute signature has no context parameter. */
+/** Session-scoped context for tools whose execute signature has no context parameter. */
+export function withToolPermissionPreset<T>(preset: PermissionPresetId, run: () => Promise<T>): Promise<T> {
+  const mode = presetToAutonomyMode(preset);
+  return toolPreset.run(preset, () => toolAutonomy.run(mode, run));
+}
+
+export function currentToolPermissionPreset(): PermissionPresetId | undefined {
+  const direct = toolPreset.getStore();
+  if (direct) return direct;
+  const legacy = toolAutonomy.getStore();
+  return legacy ? (normalizePermissionPreset(legacy) ?? undefined) : undefined;
+}
+
+/** Legacy compatibility wrapper delegating to permission presets. */
 export function withToolAutonomyMode<T>(mode: AutonomyMode, run: () => Promise<T>): Promise<T> {
+  const preset = normalizePermissionPreset(mode);
+  if (preset) {
+    return toolPreset.run(preset, () => toolAutonomy.run(mode, run));
+  }
   return toolAutonomy.run(mode, run);
 }
 
 export function currentToolAutonomyMode(): AutonomyMode | undefined {
-  return toolAutonomy.getStore();
+  const direct = toolAutonomy.getStore();
+  if (direct !== undefined) return direct;
+  const preset = toolPreset.getStore();
+  return preset ? presetToAutonomyMode(preset) : undefined;
 }
 
 export interface ToolApprovalInput {
-  mode: AutonomyMode;
+  permissionPreset?: PermissionPresetId | string | undefined;
+  mode?: AutonomyMode | undefined;
   tool: string;
   args: Record<string, unknown>;
   risk: string;
@@ -23,18 +51,17 @@ export interface ToolApprovalInput {
   reason?: string | undefined;
 }
 
-/** Read the live session mode from the tool context; never infer it from a tool argument. */
+/** Read the live session permission preset from the tool context; never infer it from a tool argument. */
 export function isAutonomousToolContext(context: unknown): boolean {
   if (!context || typeof context !== 'object' || Array.isArray(context)) return false;
   const parentLoop = (context as { parentLoop?: unknown }).parentLoop;
   if (!parentLoop || typeof parentLoop !== 'object' || Array.isArray(parentLoop)) return false;
   const config = (parentLoop as { config?: unknown }).config;
   if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
-  const mode = (config as { autonomyMode?: unknown }).autonomyMode;
-  return mode === 'C' || mode === undefined;
+  return resolveConfigPermissionPreset(config as Record<string, unknown>, 'danger-full-access') === 'danger-full-access';
 }
 
-const SHELL_TOOLS = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell', 'task_bg']);
+const SHELL_TOOLS = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell', 'terminal_pty', 'task_bg']);
 const WHOLE_FILE_DELETE = /(?:^|[;&|\n(]\s*)(?:(?:sudo|doas|pkexec|command|env)\s+)*(?:rm|unlink|rmdir|shred|srm|del|erase|Remove-Item)\b|\bgit\s+rm\b/i;
 const DELETE_API_CALL = /\b(?:os\.(?:remove|unlink)|shutil\.rmtree|fs\.(?:rm|unlink)(?:Sync)?|\.unlink|\.rmdir)\s*\(/i;
 const NESTED_SHELL_DELETE = /\b(?:bash|sh|zsh|dash)\s+-c\s+['"]\s*(?:rm|unlink|rmdir|shred|srm)\b|\b(?:powershell|pwsh)\s+(?:-Command|-c)\s+['"]?\s*Remove-Item\b/i;
@@ -84,7 +111,7 @@ export function isWholeFileDeletion(tool: string, args: Record<string, unknown>)
       || NESTED_SHELL_DELETE.test(command));
 }
 
-/** Routine browser verification inside the isolated agent browser (preview, snapshot, click, fill, screenshot, etc.) does not require HITL in Mode B or C unless uploading or downloading files. */
+/** Routine browser verification inside the isolated agent browser (preview, snapshot, click, fill, screenshot, etc.) does not require HITL in Workspace Write or Full access unless uploading or downloading files. */
 export function isRoutineBrowserVerification(tool: string, args: Record<string, unknown>): boolean {
   if (canonicalPolicyTool(tool) !== 'browser_act') return false;
   const actions = Array.isArray(args?.actions) ? args.actions : [];
@@ -120,7 +147,11 @@ function touchesCredentialMaterial(input: ToolApprovalInput): boolean {
 export function requiresToolApproval(input: ToolApprovalInput): boolean {
   if (!input || typeof input !== 'object') return true;
   const canonical = canonicalPolicyTool(input.tool);
-  if (input.mode === 'C') {
+  const preset = normalizePermissionPreset(input.permissionPreset)
+    ?? normalizePermissionPreset(input.mode)
+    ?? 'danger-full-access';
+
+  if (preset === 'danger-full-access') {
     if (touchesCredentialMaterial(input)) {
       return true;
     }
@@ -132,11 +163,11 @@ export function requiresToolApproval(input: ToolApprovalInput): boolean {
     return canonical !== 'fs_delete' || !input.standingApproval;
   }
   if (input.standingApproval) return false;
-  if (input.mode !== 'A' && isRoutineBrowserVerification(input.tool, input.args)) {
+  if (preset !== 'read-only' && isRoutineBrowserVerification(input.tool, input.args)) {
     return false;
   }
   return input.risk === 'extreme'
     || input.heavyDownload
     || input.risk === 'dangerous'
-    || input.mode === 'A';
+    || preset === 'read-only';
 }

@@ -79,6 +79,8 @@ export interface StatusLineSessionInfo {
   model?: string | undefined;
   provider?: string | undefined;
   variant?: string | undefined;
+  permissionPreset?: string | undefined;
+  autonomyMode?: string | undefined;
   tier?: string | undefined;
   cwd?: string | undefined;
   contextLimit?: number | string | undefined;

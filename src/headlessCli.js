@@ -13,6 +13,7 @@ import { safeDisplay } from './tui/text.js';
 import { lspSessionManager } from './lsp/lspClient.js';
 import { backgroundTaskManager } from './backgroundTasks.js';
 import { closeAll as closeAllMcpServers } from './mcp/mcpRegistry.js';
+import { normalizePermissionPreset, presetToAutonomyMode } from './permissionPresets.js';
 export const MAX_STDIN_PROMPT_BYTES = 1_048_576;
 export const MAX_HEADLESS_TURNS = 500;
 export const MAX_HEADLESS_TIMEOUT_MS = 3_600_000;
@@ -180,17 +181,17 @@ export function parseOutputFormat(raw) {
     }
     throw new Error(`Invalid --output-format "${raw}". Expected one of: text, json, stream-json.`);
 }
-export function parsePermissionMode(raw) {
+export function parsePermissionPreset(raw) {
     if (raw === undefined || raw === null || raw === '')
         return undefined;
-    const normalized = String(raw).trim().toUpperCase();
-    if (normalized === 'A' || normalized === 'SUPERVISED' || normalized === 'STRICT')
-        return 'A';
-    if (normalized === 'B' || normalized === 'BALANCED' || normalized === 'DEFAULT')
-        return 'B';
-    if (normalized === 'C' || normalized === 'AUTONOMOUS' || normalized === 'AUTO')
-        return 'C';
-    throw new Error(`Invalid --permission-mode "${raw}". Expected A (supervised), B (balanced), or C (autonomous).`);
+    const preset = normalizePermissionPreset(String(raw));
+    if (preset)
+        return preset;
+    throw new Error(`Invalid --permission-mode "${raw}". Expected read-only, workspace-write, or full-access.`);
+}
+export function parsePermissionMode(raw) {
+    const preset = parsePermissionPreset(raw);
+    return preset ? presetToAutonomyMode(preset) : undefined;
 }
 export function parseMaxTurns(raw) {
     if (raw === undefined || raw === null || raw === '')
@@ -431,7 +432,7 @@ export class HeadlessEventSink {
 export async function runHeadlessTask(taskPrompt, options = {}) {
     const startedAt = Date.now();
     const format = parseOutputFormat(options.outputFormat);
-    const permissionMode = parsePermissionMode(options.permissionMode);
+    const permissionPreset = parsePermissionPreset(options.permissionMode);
     const variant = parseVariantOption(options.variant);
     const maxTurns = parseMaxTurns(options.maxTurns);
     const maxTokens = parseMaxTokens(options.maxTokens);
@@ -483,8 +484,14 @@ export async function runHeadlessTask(taskPrompt, options = {}) {
             ...(options.model ? { model: options.model } : {}),
             ...(variant ? { variant } : {})
         });
-    if (permissionMode)
-        loop.autonomyOverride = permissionMode;
+    if (permissionPreset) {
+        if (typeof loop.setPermissionPreset === 'function') {
+            loop.setPermissionPreset(permissionPreset);
+        }
+        else {
+            loop.autonomyOverride = presetToAutonomyMode(permissionPreset);
+        }
+    }
     if (options.provider)
         loop.providerOverride = options.provider;
     if (options.model)

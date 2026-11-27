@@ -247,6 +247,50 @@ export function resolveAgyEffort(model) {
         return 'max';
     return 'low';
 }
+const VALID_AGY_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+function findRegisteredAgySlug(candidateLower) {
+    for (const slug of Object.values(ANTIGRAVITY_MODEL_IDS)) {
+        if (slug.toLowerCase() === candidateLower)
+            return slug;
+    }
+    return null;
+}
+/**
+ * Resolve the exact `--model` slug and optional `--effort` flag for `agy` CLI
+ * without ever emitting a conflicting pair (e.g. `--model gemini-4-neon-xhigh --effort max`)
+ * or passing `--effort` to unsuffixed orchestrator models that reject it.
+ */
+export function resolveAgyCliModelAndEffort(model, rawReasoningEffort) {
+    const baseSlug = resolveAgyModelId(model);
+    if (!baseSlug)
+        return { modelSlug: '', effort: null };
+    const cleanedEffort = typeof rawReasoningEffort === 'string'
+        ? rawReasoningEffort.trim().toLowerCase()
+        : '';
+    const requestedEffort = VALID_AGY_EFFORTS.has(cleanedEffort) ? cleanedEffort : null;
+    const suffixMatch = /^(.+?)-(minimal|low|medium|high|xhigh|max)$/i.exec(baseSlug);
+    if (suffixMatch && suffixMatch[1] && suffixMatch[2]) {
+        const baseFamily = suffixMatch[1];
+        const slugEffort = suffixMatch[2].toLowerCase();
+        if (requestedEffort && requestedEffort !== slugEffort) {
+            const sibling = findRegisteredAgySlug(`${baseFamily.toLowerCase()}-${requestedEffort}`);
+            if (sibling) {
+                return { modelSlug: sibling, effort: null };
+            }
+        }
+        // Suffixed slugs already carry the exact effort tier; omitting `--effort`
+        // avoids redundant/conflicting flag rejection on every `agy` version.
+        return { modelSlug: baseSlug, effort: null };
+    }
+    if (requestedEffort) {
+        const sibling = findRegisteredAgySlug(`${baseSlug.toLowerCase()}-${requestedEffort}`);
+        if (sibling) {
+            return { modelSlug: sibling, effort: null };
+        }
+    }
+    // Unsuffixed models (such as orchestrators) reject `--effort`.
+    return { modelSlug: baseSlug, effort: null };
+}
 export function isAntigravityProvider(provider) {
     if (!provider)
         return false;
@@ -1048,11 +1092,8 @@ export class AntigravityProvider extends LLMProvider {
                 'Use <tool_call>{"name": "browser_act", "arguments": {"actions": [{"type": "preview", "filePath": "index.html"}, {"type": "snapshot"}]}}</tool_call> to verify rendered output directly. ' +
                 'If you start a persistent local HTTP server, use `sysRunBg` or redirect stdio (`nohup ... </dev/null >/dev/null 2>&1 &`) so the server does not break with EIO when the turn pseudo-terminal closes.\n\n' + promptText;
         }
-        const modelSlug = resolveAgyModelId(this.model);
-        const explicitEffort = this.reasoningEffort && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(this.reasoningEffort)
-            ? this.reasoningEffort
-            : null;
-        const effort = explicitEffort || resolveAgyEffort(this.model);
+        const { modelSlug, effort } = resolveAgyCliModelAndEffort(this.model, this.reasoningEffort);
+        const workerEffortKey = effort || resolveAgyEffort(modelSlug);
         // Run the user's normal peer in the selected project. Do not substitute a
         // managed inference profile or hide project MCPs, skills, and instructions.
         const workspaceRoot = path.resolve(options.workspaceRoot || process.cwd());
@@ -1067,7 +1108,7 @@ export class AntigravityProvider extends LLMProvider {
             '--model',
             modelSlug
         ];
-        if (effort && (Boolean(explicitEffort) || modelSlug.endsWith(`-${effort}`) || /-(low|medium|high|xhigh|max|ultra)$/i.test(modelSlug))) {
+        if (effort) {
             args.push('--effort', effort);
         }
         if (useConversation && this.currentConversationId) {
@@ -1080,7 +1121,7 @@ export class AntigravityProvider extends LLMProvider {
             const reuseExistingWorker = Boolean(existingWorker
                 && existingWorker.workspaceRoot === workspaceRoot
                 && existingWorker.modelSlug === modelSlug
-                && existingWorker.effort === effort
+                && existingWorker.effort === workerEffortKey
                 && existingWorker.child.exitCode === null
                 && existingWorker.child.signalCode === null
                 && !existingWorker.child.killed
@@ -1105,7 +1146,7 @@ export class AntigravityProvider extends LLMProvider {
                     windowsHide: true
                 });
                 if (canUsePersistent) {
-                    this.persistentWorker = { child, workspaceRoot, modelSlug, effort };
+                    this.persistentWorker = { child, workspaceRoot, modelSlug, effort: workerEffortKey };
                 }
             }
             this.activeChild = child;
@@ -1663,7 +1704,9 @@ export class AntigravityProvider extends LLMProvider {
                         this.currentConversationId = null;
                     const errDetail = finalResultObj?.error || stderrBuffer.trim() ||
                         `terminal status ${finalResultObj?.status || 'unknown'}, exit code ${code}`;
-                    safeReject(new Error(`Antigravity Agent (agy) failed: ${errDetail}`));
+                    const isInvalidSelection = /invalid model selection|conflicts with --effort|--effort is not supported/i.test(errDetail);
+                    const failure = Object.assign(new Error(`Antigravity Agent (agy) failed: ${errDetail}`), isInvalidSelection ? { code: 'AGY_INVALID_MODEL_SELECTION', status: 400 } : {});
+                    safeReject(failure);
                     return;
                 }
                 let rawContent = (finalResultObj?.response || streamedResponse || '').trim();
@@ -1877,12 +1920,22 @@ export class AntigravityProvider extends LLMProvider {
     async chat(messages, options = {}) {
         const maxRetries = options.maxRetries ?? (options.taskIntent === 'launch' ? 1 : 2);
         let attempt = 0;
+        let clearedEffortFallback = false;
         while (attempt <= maxRetries) {
             const hadConversation = Boolean(this.currentConversationId);
             try {
                 return await this._executeOnce(messages, options);
             }
             catch (err) {
+                if (err?.code === 'AGY_INVALID_MODEL_SELECTION') {
+                    if (!clearedEffortFallback && this.reasoningEffort) {
+                        clearedEffortFallback = true;
+                        this.reasoningEffort = null;
+                        this.currentConversationId = null;
+                        continue;
+                    }
+                    throw err;
+                }
                 if (!shouldRetryPeerError(err, options.signal?.aborted === true || err?.name === 'AbortError')
                     || err?.code === 'AGY_NATIVE_ACTION_DENIED' || err?.code === 'PROVIDER_NO_PROGRESS') {
                     throw err;

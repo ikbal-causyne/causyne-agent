@@ -6,6 +6,7 @@ import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, bold, dim, GLYPHS } from './theme.js';
 import { fuzzyFilter } from './selectList.js';
 import { loadConfig, saveConfig } from '../config.js';
+import { reconcileConfigVariant } from '../modelVariants.js';
 import { startLoopbackAuth, saveOpenRouterKey, disconnectOpenRouter } from '../auth/openrouterAuth.js';
 import { setTransientNotice } from './consoleGuard.js';
 import { truncate } from './text.js';
@@ -457,12 +458,13 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
             }).catch(() => { });
         }
     });
-    const notifyPrompt = (providerId, modelId) => {
+    const notifyPrompt = (providerId, modelId, variant = '') => {
         if (typeof prompt.updateModel === 'function') {
-            prompt.updateModel(providerId, modelId);
+            prompt.updateModel(providerId, modelId, variant);
         }
         else if (prompt.renderer?.status) {
-            prompt.renderer.status.setSession({ provider: providerId, model: modelId });
+            prompt.renderer.status.setSession({ provider: providerId, model: modelId, variant });
+            prompt.surface?.setSessionInfo?.({ provider: providerId, model: modelId, variant });
             if (typeof prompt.scheduleDraw === 'function')
                 prompt.scheduleDraw();
         }
@@ -482,6 +484,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         config['model'] = target.modelId;
         config['apiKey'] = '';
         delete config['baseUrl'];
+        const nextVariant = reconcileConfigVariant(config);
         store.saveConfig(config);
         if (options.loop) {
             options.loop.config = config;
@@ -489,19 +492,21 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                 options.loop.updateTierLimits();
             }
         }
-        notifyPrompt(target.providerId, target.modelId);
+        notifyPrompt(target.providerId, target.modelId, nextVariant);
         return `Now using ${target.providerLabel} / ${target.modelId}.`;
     }
     // Case 2: Disconnect / Unlink action (e.g. Disconnect OpenRouter)
     if (target.action === 'disconnect' || target.modelId === 'disconnect') {
         const updatedConfig = disconnectOpenRouter(store);
+        const nextVariant = reconcileConfigVariant(updatedConfig);
+        store.saveConfig(updatedConfig);
         if (options.loop) {
             options.loop.config = updatedConfig;
             if (typeof options.loop.updateTierLimits === 'function') {
                 options.loop.updateTierLimits();
             }
         }
-        notifyPrompt(updatedConfig.provider || 'antigravity', updatedConfig.model || 'Gemini 3.8 Flash (Low)');
+        notifyPrompt(updatedConfig.provider || 'antigravity', updatedConfig.model || 'Gemini 3.8 Flash (Low)', nextVariant);
         return (`✓ Disconnected OpenRouter. Account and API credentials have been unlinked from Causyne Agent.\n` +
             `Active model reverted to ${updatedConfig.provider || 'antigravity'} / ${updatedConfig.model || 'Gemini 3.8 Flash (Low)'}.`);
     }
@@ -524,6 +529,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
             config['apiKey'] = existingKey;
             config['providerKeys'] = providerKeys;
             config['providerKeys']['openrouter'] = existingKey;
+            const nextVariant = reconcileConfigVariant(config);
             store.saveConfig(config);
             void resolveAvailableModels('openrouter', { ...config, apiKey: existingKey }, true).catch(() => { });
             if (options.loop) {
@@ -532,7 +538,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                     options.loop.updateTierLimits();
                 }
             }
-            notifyPrompt('openrouter', target.modelId);
+            notifyPrompt('openrouter', target.modelId, nextVariant);
             return `Now using OpenRouter Free / ${target.modelId}.`;
         }
         // Unconfigured OpenRouter: prompt where pressing Enter once immediately starts OAuth redirect
@@ -563,15 +569,16 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                 const updatedConfig = store.loadConfig();
                 if (target.modelId && updatedConfig.model !== target.modelId) {
                     updatedConfig.model = target.modelId;
-                    store.saveConfig(updatedConfig);
                 }
+                const nextVariant = reconcileConfigVariant(updatedConfig);
+                store.saveConfig(updatedConfig);
                 if (options.loop) {
                     options.loop.config = updatedConfig;
                     if (typeof options.loop.updateTierLimits === 'function') {
                         options.loop.updateTierLimits();
                     }
                 }
-                notifyPrompt('openrouter', target.modelId);
+                notifyPrompt('openrouter', target.modelId, nextVariant);
                 setTransientNotice(prompt, `✓ Connected to OpenRouter successfully! Using OpenRouter Free / ${target.modelId}.`, 5000);
                 if (prompt.surface?.stage) {
                     prompt.surface.stage.invalidate();
@@ -597,15 +604,16 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         const updatedConfig = store.loadConfig();
         if (target.modelId && updatedConfig.model !== target.modelId) {
             updatedConfig.model = target.modelId;
-            store.saveConfig(updatedConfig);
         }
+        const nextVariant = reconcileConfigVariant(updatedConfig);
+        store.saveConfig(updatedConfig);
         if (options.loop) {
             options.loop.config = updatedConfig;
             if (typeof options.loop.updateTierLimits === 'function') {
                 options.loop.updateTierLimits();
             }
         }
-        notifyPrompt('openrouter', target.modelId);
+        notifyPrompt('openrouter', target.modelId, nextVariant);
         return `✓ Saved API key. Now using OpenRouter Free / ${target.modelId}.`;
     }
     // Case 3: BYOK Provider (Cloud or Local API)
@@ -629,6 +637,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
             config['providerKeys'] = providerKeys;
             config['providerKeys'][target.providerId] = existingKey;
         }
+        const nextVariant = reconcileConfigVariant(config);
         store.saveConfig(config);
         // Proactively refresh live models in the background for this active provider
         if (existingKey || target.providerId === 'ollama') {
@@ -640,7 +649,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                 options.loop.updateTierLimits();
             }
         }
-        notifyPrompt(target.providerId, target.modelId);
+        notifyPrompt(target.providerId, target.modelId, nextVariant);
         return `Now using ${target.providerLabel} / ${target.modelId}.`;
     }
     // Key is required: open modal input dialog (InputLayer)
@@ -668,6 +677,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
     config['apiKey'] = cleanKey;
     config['providerKeys'] = providerKeys;
     config['providerKeys'][target.providerId] = cleanKey;
+    const nextVariant = reconcileConfigVariant(config);
     store.saveConfig(config);
     // Proactively refresh live models in the background with the newly saved key
     void resolveAvailableModels(target.providerId, { ...config, apiKey: cleanKey }, true).catch(() => { });
@@ -677,6 +687,6 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
             options.loop.updateTierLimits();
         }
     }
-    notifyPrompt(target.providerId, target.modelId);
+    notifyPrompt(target.providerId, target.modelId, nextVariant);
     return `Saved API key. Now using ${target.providerLabel} / ${target.modelId}.`;
 }

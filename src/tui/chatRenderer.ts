@@ -55,8 +55,7 @@ export interface ChatRendererOptions {
 }
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
-// minified output would otherwise become thousands of rows and lock the
-// terminal. (The failure openclaw's tool-execution component documents.)
+// minified output would otherwise become thousands of rows and lock the terminal.
 const PREVIEW_LINES = 12;
 
 // Cut the SOURCE before sanitising it, not after.

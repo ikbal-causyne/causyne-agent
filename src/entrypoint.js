@@ -93,7 +93,7 @@ program
     .option('--resume', 'Reuse active workspace session instead of an isolated ephemeral session')
     .option('--session <id>', 'Resume a specific session ID for headless runs')
     .option('--json-schema <schema>', 'Require and validate JSON response matching inline JSON or file path')
-    .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
+    .option('--permission-mode <preset>', 'Permission preset override for this run (read-only, workspace-write, or full-access)')
     .option('-v', 'output the version number')
     .version(pkgVersion, '-V, --version')
     .action(async (options) => {
@@ -236,6 +236,138 @@ program
     process.once('SIGTERM', () => { void shutdown(); });
 });
 program
+    .command('game [action]')
+    .description('Launch, inspect, or install Causyne Game (official separate AI Game Studio in your browser)')
+    .option('-p, --port <number>', 'Loopback port (0 = auto)', '0')
+    .option('-d, --dir <directory>', 'Explicit path to a local causyne-game checkout')
+    .option('--no-open', 'Do not automatically open Causyne Game in your browser')
+    .option('-y, --yes', 'Confirm manifest-verified download when running "causyne game install"')
+    .option('--manifest <url>', 'Override Causyne Game release manifest URL or local file path')
+    .option('--json', 'Emit status or startup details as a single JSON line')
+    .action(async (action, options) => {
+    const mode = String(action || 'start').trim().toLowerCase();
+    const { getGameStudioStatus, launchGameStudio, stopGameStudio } = await import('./game/gameLauncher.js');
+    const { defaultGameManifestUrl, installGameStudio, locateGameStudio } = await import('./game/gameProvisioner.js');
+    if (mode === 'status') {
+        const located = locateGameStudio(options.dir ? resolveUserPath(String(options.dir)) : undefined);
+        const running = getGameStudioStatus();
+        const payload = {
+            installed: Boolean(located),
+            ...(located ? { dir: located.dir, source: located.source, version: located.version, hasStudioBuild: located.hasStudioBuild, hasNodeModules: located.hasNodeModules } : {}),
+            manifestUrl: defaultGameManifestUrl(),
+            running
+        };
+        if (options.json) {
+            process.stdout.write(`${JSON.stringify(payload)}\n`);
+            return;
+        }
+        console.log('');
+        console.log('Causyne Game Status');
+        if (located) {
+            console.log(`  Installed : yes (${located.source}${located.version ? ` · v${located.version}` : ''})`);
+            console.log(`  Location  : ${safeDisplay(located.dir)}`);
+            console.log(`  Ready     : ${located.hasNodeModules && located.hasStudioBuild ? 'ready' : 'needs build/deps'}`);
+        }
+        else {
+            console.log('  Installed : no (run "causyne game install --yes" or set CAUSYNE_GAME_DIR)');
+        }
+        console.log(`  Manifest  : ${defaultGameManifestUrl()}`);
+        console.log(`  Server    : ${running.running ? `running at ${running.url}` : 'not running in this process'}`);
+        console.log('');
+        return;
+    }
+    if (mode === 'install') {
+        const result = await installGameStudio({
+            confirm: Boolean(options.yes),
+            manifestUrl: options.manifest ? String(options.manifest) : undefined
+        });
+        if (options.json) {
+            process.stdout.write(`${JSON.stringify(result)}\n`);
+            if (!result.success && !result.requiresConsent)
+                process.exitCode = 1;
+            return;
+        }
+        if (result.requiresConsent) {
+            console.log('');
+            console.log(`Causyne Game v${result.version ?? 'latest'} is available from ${result.manifestUrl}.`);
+            if (result.license)
+                console.log(`  License : ${result.license}`);
+            if (result.size)
+                console.log(`  Size    : ${(result.size / (1024 * 1024)).toFixed(1)} MB (SHA-256 verified)`);
+            console.log('Re-run with --yes to download and install into ~/.causyne/game/.');
+            console.log('');
+            return;
+        }
+        if (!result.success) {
+            console.error(`Causyne Game install failed: ${result.error || 'unknown error'}`);
+            process.exitCode = 1;
+            return;
+        }
+        console.log(result.alreadyInstalled
+            ? `Causyne Game v${result.version ?? ''} is already installed at ${safeDisplay(result.path || '')}.`
+            : `Installed Causyne Game v${result.version ?? ''} to ${safeDisplay(result.path || '')}.`);
+        return;
+    }
+    if (mode !== 'start' && mode !== 'open') {
+        console.error(`Unknown game action "${safeDisplay(mode)}". Expected: start, status, or install.`);
+        process.exitCode = 1;
+        return;
+    }
+    const parsedPort = Number.parseInt(String(options.port ?? '0'), 10);
+    const port = Number.isInteger(parsedPort) && parsedPort >= 0 && parsedPort <= 65535 ? parsedPort : 0;
+    const explicitDir = options.dir ? resolveUserPath(String(options.dir)) : undefined;
+    const shouldOpen = options.open !== false && !options.json && process.stdout.isTTY;
+    let launched;
+    try {
+        launched = await launchGameStudio({
+            dir: explicitDir,
+            port,
+            openBrowser: shouldOpen
+        });
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (options.json) {
+            process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`);
+        }
+        else {
+            console.error(`Causyne Game failed to start: ${msg}`);
+        }
+        process.exitCode = 1;
+        return;
+    }
+    if (options.json) {
+        process.stdout.write(`${JSON.stringify({
+            ok: true,
+            url: launched.url,
+            origin: launched.origin,
+            port: launched.port,
+            dir: launched.dir,
+            source: launched.source,
+            version: launched.version
+        })}\n`);
+    }
+    else {
+        console.log('');
+        console.log('Causyne Game Studio running (127.0.0.1 loopback only)');
+        console.log(`  Open URL  : ${launched.url}`);
+        console.log(`  Source    : ${launched.source}${launched.version ? ` (v${launched.version})` : ''} · ${safeDisplay(launched.dir)}`);
+        console.log('  Primary   : Causyne Agent (ACP + workspace MCP)');
+        if (launched.openedBrowser)
+            console.log('  Browser   : Opened in your default browser');
+        else if (launched.browserHint)
+            console.log(`  Remote    : ${safeDisplay(launched.browserHint)}`);
+        console.log('  Stop      : Press Ctrl+C (exits cleanly, no background daemon)');
+        console.log('');
+    }
+    const shutdown = async () => {
+        await stopGameStudio();
+        process.exit(0);
+    };
+    process.once('SIGINT', () => { void shutdown(); });
+    process.once('SIGTERM', () => { void shutdown(); });
+});
+program
     .command('status')
     .description('Show local provider, workspace and runtime status')
     .action(() => printReport(buildStatusText(), { title: 'Status' }));
@@ -264,7 +396,7 @@ program
     .option('--resume', 'Reuse active workspace session instead of an isolated ephemeral session')
     .option('--session <id>', 'Resume a specific session ID for this run')
     .option('--json-schema <schema>', 'Require and validate JSON response matching inline JSON or file path')
-    .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
+    .option('--permission-mode <preset>', 'Permission preset override for this run (read-only, workspace-write, or full-access)')
     .action(async (task, options) => {
     announceDevEmulator(options.devEmulator);
     try {
@@ -314,7 +446,7 @@ program
     .option('-m, --model <name>', 'Override model for this chat session without modifying saved config')
     .option('--provider <name>', 'Override provider for this chat session without modifying saved config')
     .option('--variant <level>', 'Override reasoning variant/effort for this chat session without modifying saved config')
-    .option('--permission-mode <mode>', 'Autonomy mode override for this chat session (A, B, or C)')
+    .option('--permission-mode <preset>', 'Permission preset override for this chat session (read-only, workspace-write, or full-access)')
     .action(async (options) => {
     announceDevEmulator(options.devEmulator);
     try {

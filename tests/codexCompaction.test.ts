@@ -47,7 +47,7 @@ test('buildCodexStyleSummary generates structured state checkpoint with files an
 
   const summary = buildCodexStyleSummary(dropped as any, 'Create interactive human anatomy 3D application');
 
-  assert.ok(summary.includes('### [COMPACTED CONTEXT CHECKPOINT — CODEX STATE PRESERVATION]'));
+  assert.ok(summary.includes('### [COMPACTED CONTEXT CHECKPOINT — CAUSYNE STATE PRESERVATION]'));
   assert.ok(summary.includes('Create interactive human anatomy 3D application'));
   assert.ok(summary.includes('Three.js / WebGL 3D rendering pipeline'));
   assert.ok(summary.includes('Web Audio Engine & sound effects'));

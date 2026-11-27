@@ -45,6 +45,12 @@ export class MuseProvider extends OpenAICompatibleProvider {
         this.contextTokens = MUSE_CONTEXT_TOKENS;
         this.reasoningEffort = clampReasoningEffort(config.reasoningEffort, this.model);
     }
+    supportsReasoningEffort() {
+        return /^muse-spark/i.test((this.model || '').trim());
+    }
+    resolvePayloadReasoningEffort() {
+        return clampReasoningEffort(this.reasoningEffort, this.model);
+    }
     audioAlternative() {
         if (this.supportsAudio)
             return null;

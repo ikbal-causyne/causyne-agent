@@ -1,12 +1,13 @@
 /**
  * @file src/core/contextCompactor.ts
- * Enterprise-Grade Context Compactor (OpenAI Codex & Claude Code Architecture).
+ * Causyne Agent — Enterprise Structured Context Compactor.
  *
  * Provides:
  * 1. High-fidelity structured state summarization (Goal, Architecture, Files, Milestones, Next Steps).
  * 2. Non-destructive physical in-place compaction preserving root anchor and recent turns.
- * 3. Proactive auto-compaction before context limits or token budgets choke execution.
- * 4. User-facing `/compact` slash-command handler.
+ * 3. Proactive auto-compaction with output-token reservation and strict shrink verification.
+ * 4. Reactive oldest-image offloading to recover cleanly from multimodal context limits.
+ * 5. User-facing `/compact` slash-command handler.
  *
  * Authorship: Strict TypeScript (Causyne Agent).
  */
@@ -188,10 +189,10 @@ export function buildCodexStyleSummary(
     }
   }
 
-  // Build the Codex-style structured report
+  // Build the structured compaction summary report
   const sections: string[] = [];
 
-  sections.push('### [COMPACTED CONTEXT CHECKPOINT — CODEX STATE PRESERVATION]');
+  sections.push('### [COMPACTED CONTEXT CHECKPOINT — CAUSYNE STATE PRESERVATION]');
 
   if (originalPrompt && originalPrompt.trim()) {
     sections.push(`**Goal & User Intent:**\n${originalPrompt.trim()}`);
@@ -338,6 +339,59 @@ export function compactSessionMessages(
 }
 
 /**
+ * Output-reservation threshold formula: reserves completion output tokens and
+ * safety headroom before computing the auto-compaction trigger ceiling.
+ */
+export function computeCompactionThresholdChars(
+  maxPoolChars: number,
+  options: {
+    thresholdFraction?: number | undefined;
+    reservedOutputTokens?: number | undefined;
+    headroomTokens?: number | undefined;
+  } = {}
+): number {
+  const safePool = Math.max(256, Math.floor(maxPoolChars));
+  const fraction = options.thresholdFraction ?? 0.75;
+  const reservedChars = Math.max(0, (options.reservedOutputTokens ?? 4_096) * CHARS_PER_TOKEN);
+  const headroomChars = Math.max(0, (options.headroomTokens ?? 2_048) * CHARS_PER_TOKEN);
+  const byFraction = Math.floor(safePool * fraction);
+  const byBudget = safePool > (reservedChars + headroomChars)
+    ? Math.max(Math.floor(safePool * 0.45), safePool - reservedChars - headroomChars)
+    : byFraction;
+  return Math.min(byFraction, byBudget);
+}
+
+/**
+ * Reactively offloads up to `maxToOffload` oldest inline input image blocks
+ * (from user or tool messages) into lightweight placeholder text without
+ * mutating assistant replies or dropping surrounding conversation text.
+ */
+export function offloadOldestInputImages(
+  messages: any[],
+  maxToOffload = 4
+): { offloadedCount: number } {
+  let offloadedCount = 0;
+  for (let i = 0; i < messages.length && offloadedCount < maxToOffload; i++) {
+    const msg = messages[i];
+    if (!msg || (msg.role !== 'user' && msg.role !== 'tool') || !Array.isArray(msg.content)) continue;
+    for (let j = 0; j < msg.content.length && offloadedCount < maxToOffload; j++) {
+      const part = msg.content[j];
+      if (!part || typeof part !== 'object') continue;
+      const isImage = part.type === 'image_url'
+        || part.type === 'image'
+        || part.type === 'input_image';
+      if (!isImage) continue;
+      msg.content[j] = {
+        type: 'text',
+        text: '[Image offloaded to preserve context capacity; re-inspect the workspace file if visual detail is needed.]'
+      };
+      offloadedCount++;
+    }
+  }
+  return { offloadedCount };
+}
+
+/**
  * Proactively checks memory pressure and runs auto-compaction if context threshold is exceeded.
  * Operates silently and seamlessly without interrupting active work.
  */
@@ -349,11 +403,13 @@ export function autoCompactIfUnderPressure(
     return null;
   }
 
-  const thresholdFraction = options.thresholdFraction ?? 0.70;
   const currentChars = measureMessages(loop.messages);
   const maxPool = loop._contextLimitChars || 120_000;
+  const triggerChars = computeCompactionThresholdChars(maxPool, {
+    thresholdFraction: options.thresholdFraction ?? 0.70
+  });
 
-  if (currentChars >= maxPool * thresholdFraction) {
+  if (currentChars >= triggerChars) {
     const result = compactSessionMessages(loop.messages, {
       keepRecentTurns: 4,
       taskId: loop.taskId,

@@ -1,16 +1,8 @@
-// The filterable list every dialog is built out of.
+// Filterable, fuzzy-scored list primitive shared across all TUI pickers
+// (command palette, model picker, session list, theme list, agent list, MCP list).
 //
-// openclaw has components/filterable-select-list.ts and searchable-select-list.ts;
-// opencode has ui/dialog-select.tsx, and its command palette, model picker,
-// session list, theme list, agent list and MCP list are all that one component
-// with different options. The lesson is the component, not the dialogs: build
-// this once and well, and every dialog after it costs twenty lines.
-//
-// The fuzzy matcher is the part that decides whether a palette feels sharp or
-// useless. A plain `includes()` cannot find "session list" from "sesl", and an
-// unscored subsequence match ranks garbage first. This scores the way people
-// expect: consecutive letters and word starts win, and a match at the beginning
-// of the label beats the same letters buried in the middle.
+// Scores consecutive letters and word starts higher than scattered matches so
+// short queries jump directly to the intended item.
 //
 // Pure Node over ./theme.js and ./text.js. No dependency, no shell.
 import { paint, bold, dim, GLYPHS } from './theme.js';

@@ -1,20 +1,7 @@
-// The concrete dialogs.
-//
-// Every one of these is the SelectList or a scrolling text pane inside a Layer.
-// That is the payoff of building the primitives properly: opencode needs twenty
-// `dialog-*.tsx` files because each one re-declares its own layout; here a
-// picker is a title, a list of items and a callback.
-//
-// The one that is not a picker is ApprovalLayer, and it is the reason this file
-// exists at all. Causyne's approval used inquirer, which means the question is
-// asked in the scrollback, below whatever the agent last printed, with the diff
-// already scrolled away above it. As a modal the risk badge, the tool, the
-// arguments and the full scrollable diff sit in one frame that the user cannot
-// lose — and neither reference does this: openclaw approves in a plain prompt,
-// opencode's permission dialog does not scroll its diff by keyboard.
-//
+// Concrete TUI modal dialogs built over SelectList and scrolling Layer panes.
+// ApprovalLayer keeps the risk badge, tool, arguments, and scrollable diff in
+// one focused modal frame instead of losing them in terminal scrollback.
 // Pure Node over ./selectList.js, ./overlay.js, ./theme.js, ./text.js.
-// No dependency, no shell.
 
 import { Layer, dialogHint, type LayerOptions } from './overlay.js';
 import { SelectList, type SelectListItem } from './selectList.js';

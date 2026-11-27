@@ -1,4 +1,5 @@
 import { loadConfig, saveConfig } from '../config.js';
+import { PERMISSION_PRESET_CATALOG, getDefaultPermissionPreset, getPermissionPresetDescriptor, normalizePermissionPreset, setDefaultPermissionPreset } from '../permissionPresets.js';
 import { getAvailableProvidersOverview, getLiveAntigravityModels, getModelVariantsForPeer } from '../dynamicCatalogue.js';
 import { resolveModelVariants } from '../modelVariants.js';
 import { isAcpProvider } from '../providers/acp.js';
@@ -6,24 +7,30 @@ import { writeClipboardSync } from './clipboardSync.js';
 import { SelectLayer } from './dialogs.js';
 import { looksSensitive } from './history.js';
 export function openModeControl(prompt, loop) {
-    const config = loadConfig();
-    const current = String(config.autonomyMode || 'B').toUpperCase();
+    const current = getDefaultPermissionPreset();
     prompt.openLayer(new SelectLayer({
-        title: 'Autonomy mode',
-        items: [
-            { id: 'A', label: 'A · Ask', description: 'Review actions before execution', value: 'A' },
-            { id: 'B', label: 'B · Balanced', description: 'Work independently within permission boundaries', value: 'B' },
-            { id: 'C', label: 'C · Autonomous', description: 'Continue within the selected workspace and policy', value: 'C' }
-        ].map(item => ({ ...item, label: `${item.label}${item.value === current ? '  (active)' : ''}` })),
+        title: 'Permission preset',
+        items: PERMISSION_PRESET_CATALOG.map((preset) => ({
+            id: preset.id,
+            label: `${preset.label}${preset.id === current ? '  (active)' : ''}`,
+            description: preset.description,
+            value: preset.id
+        })),
         onPick: (item) => {
-            if (!item?.value)
+            const chosen = normalizePermissionPreset(item?.value);
+            if (!chosen)
                 return;
-            config.autonomyMode = item.value;
-            saveConfig(config);
-            loop.setAutonomyMode(item.value);
-            prompt.renderer?.status?.setSession?.({ autonomyMode: item.value });
-            prompt.surface?.setSessionInfo?.({ autonomyMode: item.value });
-            prompt.notice = `Mode ${item.value} active`;
+            const desc = getPermissionPresetDescriptor(chosen);
+            setDefaultPermissionPreset(chosen);
+            if (typeof loop.setPermissionPreset === 'function') {
+                loop.setPermissionPreset(chosen);
+            }
+            else {
+                loop.setAutonomyMode(desc.autonomyMode);
+            }
+            prompt.renderer?.status?.setSession?.({ permissionPreset: chosen, autonomyMode: desc.autonomyMode });
+            prompt.surface?.setSessionInfo?.({ permissionPreset: chosen, autonomyMode: desc.autonomyMode });
+            prompt.notice = `${desc.label} active`;
             prompt.scheduleDraw();
         }
     }));
@@ -55,18 +62,23 @@ export function availableModelVariants(config) {
     return advertised.filter(model => splitModelVariant(model)?.base === parsed.base);
 }
 export function cycleModeControl(prompt, loop) {
-    const config = loadConfig();
-    const order = ['A', 'B', 'C'];
-    const current = String(loop?.config?.autonomyMode || config.autonomyMode || 'B').toUpperCase();
+    const order = ['read-only', 'workspace-write', 'danger-full-access'];
+    const current = normalizePermissionPreset(loop?.config?.permissionPreset)
+        ?? normalizePermissionPreset(loop?.config?.autonomyMode)
+        ?? getDefaultPermissionPreset();
     const idx = order.indexOf(current);
     const next = order[(idx + 1) % order.length];
-    config.autonomyMode = next;
-    saveConfig(config);
-    loop.setAutonomyMode(next);
-    prompt.renderer?.status?.setSession?.({ autonomyMode: next });
-    prompt.surface?.setSessionInfo?.({ autonomyMode: next });
-    const labels = { A: 'Ask', B: 'Balanced', C: 'Autonomous' };
-    prompt.notice = `Mode ${next} · ${labels[next]} (Shift+Tab cycle · Ctrl+G menu)`;
+    const desc = getPermissionPresetDescriptor(next);
+    setDefaultPermissionPreset(next);
+    if (typeof loop.setPermissionPreset === 'function') {
+        loop.setPermissionPreset(next);
+    }
+    else {
+        loop.setAutonomyMode(desc.autonomyMode);
+    }
+    prompt.renderer?.status?.setSession?.({ permissionPreset: next, autonomyMode: desc.autonomyMode });
+    prompt.surface?.setSessionInfo?.({ permissionPreset: next, autonomyMode: desc.autonomyMode });
+    prompt.notice = `${desc.label} · Shift+Tab cycle · Ctrl+G menu`;
     prompt.scheduleDraw();
 }
 function resolveVariantSpecForControl(config, loop) {
@@ -100,6 +112,78 @@ function resolveVariantSpecForControl(config, loop) {
         availableAgyModels: liveAgyModels && liveAgyModels.length > 0 ? liveAgyModels : undefined
     });
 }
+function applyVariantSilently(rawChoice, spec, config, prompt, loop) {
+    const isAuto = rawChoice.toLowerCase() === 'auto';
+    if (isAuto) {
+        delete config.reasoningEffort;
+        delete config.reasoningBudgetTokens;
+        saveConfig(config);
+        const liveAcp = typeof loop?.llm?.getLiveVariantOption === 'function'
+            ? loop.llm.getLiveVariantOption()
+            : null;
+        if (liveAcp
+            && Array.isArray(liveAcp.options)
+            && liveAcp.options.some((opt) => String(opt?.value || '').toLowerCase() === 'default')
+            && typeof loop?.llm?.applyVariant === 'function') {
+            void Promise.resolve(loop.llm.applyVariant('default', liveAcp.configOptionId || spec.acpConfigId)).catch(() => { });
+        }
+        if (loop) {
+            loop.config = loadConfig();
+            if (typeof loop.updateTierLimits === 'function')
+                loop.updateTierLimits();
+        }
+        if (typeof prompt.updateModel === 'function') {
+            prompt.updateModel(config.provider || spec.provider, config.model || spec.model, '');
+        }
+        else {
+            prompt.renderer?.status?.setSession?.({ variant: '' });
+            prompt.surface?.setSessionInfo?.({ variant: '' });
+        }
+        return;
+    }
+    const matched = spec.options.find((o) => o.id.toLowerCase() === rawChoice.toLowerCase());
+    if (!matched)
+        return;
+    const modelChanged = Boolean(matched.targetModelId && matched.targetModelId !== config.model);
+    if (matched.targetModelId) {
+        config.model = matched.targetModelId;
+    }
+    if (spec.source === 'agy_models') {
+        delete config.reasoningEffort;
+        delete config.reasoningBudgetTokens;
+    }
+    else {
+        config.reasoningEffort = matched.id;
+    }
+    saveConfig(config);
+    const displayedVariant = spec.source === 'agy_models' ? '' : matched.id;
+    if (typeof loop?.llm?.applyVariant === 'function' && !modelChanged) {
+        void Promise.resolve(loop.llm.applyVariant(matched.id, matched.acpConfigId)).then(() => {
+            if (loop)
+                loop.config = loadConfig();
+        }).catch(() => { });
+    }
+    else if (loop) {
+        loop.config = loadConfig();
+        if (typeof loop.updateTierLimits === 'function')
+            loop.updateTierLimits();
+    }
+    if (typeof prompt.updateModel === 'function') {
+        prompt.updateModel(config.provider || spec.provider, config.model || spec.model, displayedVariant);
+    }
+    else {
+        prompt.renderer?.status?.setSession?.({
+            provider: config.provider || spec.provider,
+            model: config.model || spec.model,
+            variant: displayedVariant
+        });
+        prompt.surface?.setSessionInfo?.({
+            provider: config.provider || spec.provider,
+            model: config.model || spec.model,
+            variant: displayedVariant
+        });
+    }
+}
 export function cycleVariantControl(prompt, loop) {
     const config = loadConfig();
     const spec = resolveVariantSpecForControl(config, loop);
@@ -117,7 +201,7 @@ export function cycleVariantControl(prompt, loop) {
     const currentIdx = cycleValues.findIndex((v) => v.toLowerCase() === currentId);
     const nextIdx = (currentIdx + 1) % cycleValues.length;
     const nextVal = cycleValues[nextIdx];
-    prompt.deliver(`/variant ${nextVal}`);
+    applyVariantSilently(nextVal, spec, config, prompt, loop);
     const positionLabel = nextVal === 'auto'
         ? 'auto (default)'
         : `${nextVal} (${nextIdx + 1}/${spec.options.length})`;
@@ -163,7 +247,7 @@ export function openVariantControl(prompt, loop) {
         onPick: (item) => {
             if (!item?.value)
                 return;
-            prompt.deliver(`/variant ${item.value}`);
+            applyVariantSilently(item.value, spec, loadConfig(), prompt, loop);
             prompt.notice = item.value === 'auto' ? 'Variant reset to auto' : `Variant set to ${item.value}`;
             prompt.scheduleDraw();
         }

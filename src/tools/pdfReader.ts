@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
+import zlib from 'node:zlib';
 import {
-  getErrorMessage,
   assertSafeWorkspaceInput,
   boundedInteger,
   sanitizeToolError,
@@ -9,6 +9,8 @@ import {
 } from './toolPathSafety.js';
 
 const MAX_PDF_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_DECOMPRESSED_STREAM_BYTES = 4 * 1024 * 1024;
+const MAX_TOTAL_DECOMPRESSED_BYTES = 16 * 1024 * 1024;
 
 function decodePdfLiteral(raw: string): string {
   return raw.replace(/\\([nrt()\\]|[0-7]{1,3})/g, (_match, token: string) => {
@@ -20,32 +22,121 @@ function decodePdfLiteral(raw: string): string {
   });
 }
 
-function extractTextFromPdfBuffer(buffer: Buffer): string {
-  const textChunks: string[] = [];
-  const content = buffer.toString('binary');
+function decodePdfHexString(hex: string): string {
+  const cleaned = hex.replace(/[^0-9a-fA-F]/g, '');
+  if (cleaned.length < 2) return '';
+  const padded = cleaned.length % 2 === 1 ? `${cleaned}0` : cleaned;
+  const bytes = Buffer.from(padded, 'hex');
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    // UTF-16BE BOM
+    let out = '';
+    for (let i = 2; i + 1 < bytes.length; i += 2) {
+      out += String.fromCharCode((bytes[i]! << 8) | bytes[i + 1]!);
+    }
+    return out;
+  }
+  return bytes.toString('latin1');
+}
 
+function extractTextBlocksFromStream(streamContent: string, out: string[]): void {
   let pos = 0;
-  while (pos < content.length) {
-    const start = content.indexOf('BT', pos);
+  while (pos < streamContent.length) {
+    const start = streamContent.indexOf('BT', pos);
     if (start === -1) break;
-    const end = content.indexOf('ET', start + 2);
+    const end = streamContent.indexOf('ET', start + 2);
     if (end === -1) break;
-    const block = content.slice(start, end + 2);
+    const block = streamContent.slice(start + 2, end);
     pos = end + 2;
 
-    const strRegex = /\(([^)]{1,4096})\)/g;
-    let strMatch: RegExpExecArray | null;
-    while ((strMatch = strRegex.exec(block)) !== null) {
-      const rawText = decodePdfLiteral(strMatch[1] ?? '');
-      if (rawText && rawText.trim().length > 0 && !rawText.startsWith('F') && !rawText.includes('\x00')) {
-        textChunks.push(rawText);
+    let i = 0;
+    while (i < block.length) {
+      const ch = block[i]!;
+      if (ch === '(') {
+        let depth = 1;
+        let j = i + 1;
+        while (j < block.length && depth > 0) {
+          if (block[j] === '\\') { j += 2; continue; }
+          if (block[j] === '(') depth++;
+          else if (block[j] === ')') depth--;
+          j++;
+        }
+        const raw = block.slice(i + 1, Math.max(i + 1, j - 1)).slice(0, 4096);
+        const decoded = decodePdfLiteral(raw);
+        if (decoded && decoded.trim().length > 0 && !decoded.includes('\x00')) {
+          out.push(decoded);
+        }
+        i = j;
+        continue;
+      }
+      if (ch === '<' && block[i + 1] !== '<') {
+        const close = block.indexOf('>', i + 1);
+        if (close !== -1) {
+          const decoded = decodePdfHexString(block.slice(i + 1, close).slice(0, 4096));
+          if (decoded && decoded.trim().length > 0 && !decoded.includes('\x00')) {
+            out.push(decoded);
+          }
+          i = close + 1;
+          continue;
+        }
+      }
+      i++;
+    }
+  }
+}
+
+function tryInflatePdfStream(rawSlice: Buffer): Buffer | null {
+  if (rawSlice.length === 0 || rawSlice.length > MAX_DECOMPRESSED_STREAM_BYTES) return null;
+  try {
+    return zlib.inflateSync(rawSlice, { maxOutputLength: MAX_DECOMPRESSED_STREAM_BYTES });
+  } catch {
+    try {
+      return zlib.inflateRawSync(rawSlice, { maxOutputLength: MAX_DECOMPRESSED_STREAM_BYTES });
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function extractTextFromPdfBuffer(buffer: Buffer): string {
+  const textChunks: string[] = [];
+  const rawBinary = buffer.toString('binary');
+
+  // 1. Decompress FlateDecode / zlib PDF streams using built-in node:zlib
+  let totalDecompressed = 0;
+  let searchPos = 0;
+  while (searchPos < rawBinary.length && totalDecompressed < MAX_TOTAL_DECOMPRESSED_BYTES) {
+    const streamToken = rawBinary.indexOf('stream', searchPos);
+    if (streamToken === -1) break;
+    let dataStart = streamToken + 6;
+    if (rawBinary[dataStart] === '\r' && rawBinary[dataStart + 1] === '\n') dataStart += 2;
+    else if (rawBinary[dataStart] === '\n' || rawBinary[dataStart] === '\r') dataStart += 1;
+    const endToken = rawBinary.indexOf('endstream', dataStart);
+    if (endToken === -1) break;
+    searchPos = endToken + 9;
+
+    // Trim trailing line break before `endstream`
+    let dataEnd = endToken;
+    if (dataEnd > dataStart && rawBinary[dataEnd - 1] === '\n') dataEnd--;
+    if (dataEnd > dataStart && rawBinary[dataEnd - 1] === '\r') dataEnd--;
+    if (dataEnd <= dataStart) continue;
+
+    const dictWindow = rawBinary.slice(Math.max(0, streamToken - 320), streamToken);
+    if (dictWindow.includes('FlateDecode')) {
+      const inflated = tryInflatePdfStream(buffer.subarray(dataStart, dataEnd));
+      if (inflated && inflated.length > 0) {
+        totalDecompressed += inflated.length;
+        extractTextBlocksFromStream(inflated.toString('latin1'), textChunks);
       }
     }
   }
 
-  if (textChunks.length < 5) {
+  // 2. Also scan uncompressed streams directly
+  extractTextBlocksFromStream(rawBinary, textChunks);
+
+  const combined = textChunks.join(' ').trim();
+  if (combined.length < 10) {
     const printableRegex = /[\x20-\x7E\r\n\t]{5,}/g;
-    const matches = content.match(printableRegex) || [];
+    const matches = rawBinary.match(printableRegex) || [];
     const keywords = ['obj', 'endobj', 'stream', 'endstream', 'xref', 'trailer', 'startxref', 'Catalog', 'Pages', 'Font', 'XObject', 'ProcSet', 'MediaBox'];
     const filtered = matches.filter((s) => {
       const trimmed = s.trim();
@@ -58,7 +149,7 @@ function extractTextFromPdfBuffer(buffer: Buffer): string {
     }
   }
 
-  return textChunks.join(' ');
+  return combined;
 }
 
 export interface PdfReadArgs {
@@ -77,13 +168,13 @@ export interface PdfReadResult {
 export const pdfRead = {
   schema: {
     name: 'pdf_read',
-    description: 'Extract text content from a local PDF document file. Ideal for reading attached PDFs, reports, scripts, and theses.',
+    description: 'Extract text content from a local PDF document file (supports both uncompressed and FlateDecode-compressed streams). Ideal for reading attached PDFs, reports, scripts, and papers.',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Absolute path to the .pdf file.'
+          description: 'Absolute or workspace-relative path to the .pdf file.'
         },
         maxChars: {
           type: 'number',
@@ -106,7 +197,7 @@ export const pdfRead = {
       if (!extractedText || extractedText.length < 20) {
         return {
           success: true,
-          output: `[NOTICE: Only minimal text extracted (${extractedText.length} chars). The PDF might be scanned/image-based or heavily FlateDecode-compressed. For image-based PDFs, try converting pages to images or using OCR.]`,
+          output: `[NOTICE: Only minimal text extracted (${extractedText.length} chars). The PDF might be scanned/image-based. For scanned PDFs, convert pages to images and inspect visually.]`,
           rawExtracted: extractedText
         };
       }

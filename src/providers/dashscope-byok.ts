@@ -4,6 +4,7 @@ import { LLMProvider, type ChatOptions, type ChatResponse, type ProviderConfig }
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 import {
+  ProviderHttpError,
   requireApiKey,
   resolveTemperature,
   safeProviderFetchJson
@@ -116,17 +117,34 @@ export class DashscopeByokProvider extends LLMProvider {
       }
     };
 
-    const data = wantsStreaming(options)
-      ? await streamOpenAICompatibleChat({
-          ...requestOpts,
-          payload,
-          onChunk: options.onChunk,
-          onReasoningChunk: options.onReasoningChunk
-        })
-      : await safeProviderFetchJson({
-          ...requestOpts,
-          body: JSON.stringify(payload)
-        });
+    const runDashscopeRequest = async (reqPayload: Record<string, any>) => (
+      wantsStreaming(options)
+        ? await streamOpenAICompatibleChat({
+            ...requestOpts,
+            payload: reqPayload,
+            onChunk: options.onChunk,
+            onReasoningChunk: options.onReasoningChunk
+          })
+        : await safeProviderFetchJson({
+            ...requestOpts,
+            body: JSON.stringify(reqPayload)
+          })
+    );
+
+    let data: Record<string, any>;
+    try {
+      data = await runDashscopeRequest(payload);
+    } catch (err: unknown) {
+      const rejectedThinking = ('enable_thinking' in payload || 'thinking_budget' in payload)
+        && err instanceof ProviderHttpError
+        && err.status === 400
+        && /(?:enable_thinking|thinking_budget|thinking|unsupported|not supported|invalid|unknown)/i.test(err.message);
+      if (!rejectedThinking) throw err;
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload['enable_thinking'];
+      delete fallbackPayload['thinking_budget'];
+      data = await runDashscopeRequest(fallbackPayload);
+    }
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_dashscope',
       freeFormPaths

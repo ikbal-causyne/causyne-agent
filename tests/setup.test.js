@@ -19,10 +19,11 @@ function harness(choices, texts, initial = {}) {
   return { ui, store, questions, saved, run: () => runSetup(ui, providers, store, '/workspace') };
 }
 test('provider change cannot inherit a credential or old endpoint', async () => {
-  const h = harness(['anthropic', 'B', 'save'], ['model-b', 'new-key'],
+  const h = harness(['anthropic', 'workspace-write', 'save'], ['model-b', 'new-key'],
     { provider: 'openai', apiKey: 'old-key', providerKeys: { anthropic: 'stale-key', openai: 'old-key' }, baseUrl: 'https://old.test/chat', tokenBudget: { maxCostUsd: 3 } });
   await h.run();
   assert.equal(h.saved[0].apiKey, 'new-key');
+  assert.equal(h.saved[0].permissionPreset, 'workspace-write');
   assert.equal(h.saved[0].providerKeys?.anthropic, 'new-key');
   assert.equal(h.saved[0].providerKeys?.openai, 'old-key');
   assert.equal(h.saved[0].baseUrl, undefined);
@@ -31,29 +32,29 @@ test('provider change cannot inherit a credential or old endpoint', async () => 
   assert.ok(!JSON.stringify(h.questions).includes('new-key'));
 });
 test('same provider keeps its key while changed custom endpoint drops it', async () => {
-  const same = harness(['openai', 'B', 'save'], ['model-a', ''], { provider: 'openai', apiKey: 'old-key' });
+  const same = harness(['openai', 'workspace-write', 'save'], ['model-a', ''], { provider: 'openai', apiKey: 'old-key' });
   await same.run(); assert.equal(same.saved[0].apiKey, 'old-key');
-  const moved = harness(['openai-compatible', 'B', 'save'], ['https://new.test/chat', 'custom', ''],
+  const moved = harness(['openai-compatible', 'workspace-write', 'save'], ['https://new.test/chat', 'custom', ''],
     { provider: 'openai-compatible', baseUrl: 'https://old.test/chat', apiKey: 'old-key', providerKeys: { 'openai-compatible': 'old-key' } });
   await moved.run();
   assert.equal(moved.saved[0].apiKey, '');
   assert.equal(moved.saved[0].providerKeys?.['openai-compatible'], undefined);
 });
 test('Ollama skips credentials and review cancellation writes nothing', async () => {
-  const h = harness(['ollama', 'C', 'cancel'], ['http://localhost:11434/api/chat', 'local'], { provider: 'openai', apiKey: 'old' });
+  const h = harness(['ollama', 'danger-full-access', 'cancel'], ['http://localhost:11434/api/chat', 'local'], { provider: 'openai', apiKey: 'old' });
   assert.equal(await h.run(), null); assert.equal(h.saved.length, 0);
   assert.ok(!h.questions.some(q => q.mask));
 });
 test('cancel at every setup stage leaves config unchanged', async () => {
   for (const [choices, texts] of [
     [[], []], [['openai-compatible'], []], [['openai'], []], [['openai'], ['model']],
-    [['openai'], ['model', 'key']], [['openai', 'B'], ['model', 'key']]
+    [['openai'], ['model', 'key']], [['openai', 'workspace-write'], ['model', 'key']]
   ]) {
     const h = harness(choices, texts); assert.equal(await h.run(), null); assert.equal(h.saved.length, 0);
   }
 });
 test('empty credential on a different hosted provider re-prompts rather than copying', async () => {
-  const h = harness(['anthropic', 'B', 'save'], ['model', '', 'new'], { provider: 'openai', apiKey: 'old' });
+  const h = harness(['anthropic', 'workspace-write', 'save'], ['model', '', 'new'], { provider: 'openai', apiKey: 'old' });
   await h.run(); assert.equal(h.saved[0].apiKey, 'new');
   assert.equal(h.questions.filter(q => q.mask).length, 2);
 });
@@ -69,7 +70,7 @@ test('runSetup sanitizes workspace path in review screen', async () => {
   const questions = [];
   const store = { loadConfig: () => ({}), saveConfig() {} };
   const ui = {
-    async select(q) { questions.push(q); return q.items.find(i => i.id === 'save' || i.id === 'B' || i.id === 'ollama') || null; },
+    async select(q) { questions.push(q); return q.items.find(i => i.id === 'save' || i.id === 'workspace-write' || i.id === 'ollama') || null; },
     async text(q) { questions.push(q); return q.title.includes('endpoint') ? 'http://localhost:11434/api/chat' : 'local'; }
   };
   await runSetup(ui, providers, store, '/tmp/ws\x1b[2J\nline2');

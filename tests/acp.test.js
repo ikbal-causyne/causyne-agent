@@ -58,23 +58,46 @@ test('initialize rejects a missing protocol version', async () => {
   assert.equal(response.error.code, -32602);
 });
 
-test('session/new returns modes and rejects unsupported inputs', async () => {
+test('session/new returns modes, model configOptions, accepts stdio mcpServers, and rejects unsupported inputs', async () => {
   const h = makeHarness();
   const response = await newSession(h);
   assert.equal(typeof response.result.sessionId, 'string');
   assert.ok(response.result.sessionId.length > 0);
   assert.equal(response.result.modes.currentModeId, 'standard');
   assert.deepEqual(response.result.modes.availableModes.map((mode) => mode.id), ['autonomous', 'standard', 'supervised']);
-  assert.equal(response.result.configOptions, undefined);
+  assert.ok(Array.isArray(response.result.configOptions));
+  assert.ok(response.result.configOptions.some((opt) => opt.category === 'model'));
 
+  // Malformed stdio entry (missing args array) and HTTP MCP transport must still be rejected with -32602.
   await h.send({
     jsonrpc: '2.0',
     id: 2,
     method: 'session/new',
     params: { cwd: process.cwd(), mcpServers: [{ name: 'x', command: 'x' }] }
   });
-  const rejected = await h.waitFor((message) => message.id === 2);
-  assert.equal(rejected.error.code, -32602);
+  const rejectedMalformed = await h.waitFor((message) => message.id === 2);
+  assert.equal(rejectedMalformed.error.code, -32602);
+
+  await h.send({
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'session/new',
+    params: { cwd: process.cwd(), mcpServers: [{ name: 'remote', type: 'http', url: 'https://example.com/mcp' }] }
+  });
+  const rejectedHttp = await h.waitFor((message) => message.id === 3);
+  assert.equal(rejectedHttp.error.code, -32602);
+
+  // Valid stdio MCP server is accepted session-scoped and cleaned up on session/close.
+  await h.send({
+    jsonrpc: '2.0',
+    id: 4,
+    method: 'session/new',
+    params: { cwd: process.cwd(), mcpServers: [{ name: 'game-host', command: process.execPath, args: ['-e', 'process.exit(0)'], env: [{ name: 'TEST_VAR', value: '1' }] }] }
+  });
+  const accepted = await h.waitFor((message) => message.id === 4);
+  assert.ok(typeof accepted.result?.sessionId === 'string' && accepted.result.sessionId.length > 0);
+  await h.send({ jsonrpc: '2.0', id: 5, method: 'session/close', params: { sessionId: accepted.result.sessionId } });
+  await h.waitFor((message) => message.id === 5);
 });
 
 test('session/new refuses a second workspace in the same server', async () => {

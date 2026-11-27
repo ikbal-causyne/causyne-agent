@@ -95,6 +95,23 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.equal(launchScopeError('sysRun', { command: 'curl -f http://127.0.0.1:8765/' }), null);
   assert.match(launchScopeError('sysRun', { command: 'curl -o server.py http://example.com/' }), /Use read-only inspection/);
   assert.equal(isServerLaunchCommand('python3 /tmp/server.py'), true);
+
+  // Wrapped Super Agent / MCP harness prompts with system guidance ("read-only", "do not call",
+  // "without edits") must never falsely trigger the user-intent no-execution guard.
+  const superAgentEnvelope = [
+    'You are Causyne Game Super Agent. Read openmotion://workflow/game/start via openmotion_read_workflow.',
+    'Do NOT call openmotion_game_write_files when unmodified. For plain Q&A without edits, answer concisely.',
+    '<openmotion-workspace-context>read-only reference context for prior chats</openmotion-workspace-context>',
+    '\nUser request: make causyne agent ads video commercial like this'
+  ].join('\n');
+  assert.equal(isNoExecutionPrompt(superAgentEnvelope), false);
+  assert.equal(isReadOnlyOrExplanatoryPrompt(superAgentEnvelope), false);
+  assert.equal(readOnlyScopeError('tool_search', {}, superAgentEnvelope), null);
+  assert.equal(readOnlyScopeError('mcp__openmotion__openmotion_get_project', {}, superAgentEnvelope), null);
+  // Genuine direct user no-execution request still blocks mutations while allowing tool_search/fs_read.
+  assert.equal(isNoExecutionPrompt('just explain how it works, do not execute anything'), true);
+  assert.equal(readOnlyScopeError('tool_search', {}, 'just explain, do not execute anything'), null);
+  assert.match(readOnlyScopeError('fs_write', { path: 'x.txt' }, 'just explain, do not execute anything') || '', /not authorized/);
 });
 
 test('resumed Antigravity launch preserves peer configuration and the actual host workspace', { skip: process.platform === 'win32' }, async () => {

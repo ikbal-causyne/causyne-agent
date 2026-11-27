@@ -30,9 +30,82 @@ const SCOPED_BACKTICK_EXCLUSION = /\b(?:don'?t|do\s+not|never|without)\s+(?:modi
 const SCOPED_PATH_EXCLUSION = /\b(?:don'?t|do\s+not|never|without)\s+(?:modify|modifying|mutate|mutating|touch|touching|write|writing|change|changing|edit|editing|delete|deleting|alter|altering|update|updating)\s+(?:the\s+)?(?:[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_./-]{1,128}|[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9]{1,10})(?:\s+(?:or|and)\s+(?:the\s+)?(?:[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_./-]{1,128}|[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9]{1,10})){0,4}/gi;
 const SCOPED_ARTIFACT_EXCLUSION = /\b(?:don'?t|do\s+not|never|without)\s+(?:modify|modifying|mutate|mutating|touch|touching|write|writing|change|changing|edit|editing|delete|deleting|alter|altering|update|updating)\s+(?:the\s+|existing\s+|other\s+|unrelated\s+|public\s+|protected\s+|original\s+)?(?:tests?|test\s+files?|specs?|fixtures?|configs?|config\s+files?|lockfiles?|migrations?|schemas?|exports?|public\s+api|signatures?|interfaces?|headers?|comments?|formatting|unrelated\s+files?|protected\s+files?)\b/gi;
 
+const STRUCTURED_HARNESS_TAGS = [
+  'openmotion-workspace-context',
+  'openmotion-task-instructions',
+  'openmotion-referenced-conversations',
+  'openmotion-browser-annotations',
+  'workspace-context',
+  'system-reminder'
+] as const;
+
+function stripTaggedBlockLinear(input: string, tagName: string): string {
+  const openTag = `<${tagName}`;
+  const closeTag = `</${tagName}>`;
+  let cursor = 0;
+  let out = '';
+  while (cursor < input.length) {
+    const start = input.indexOf(openTag, cursor);
+    if (start < 0) {
+      out += input.slice(cursor);
+      break;
+    }
+    const openEnd = input.indexOf('>', start + openTag.length);
+    if (openEnd < 0) {
+      out += input.slice(cursor);
+      break;
+    }
+    out += input.slice(cursor, start);
+    const end = input.indexOf(closeTag, openEnd + 1);
+    if (end < 0) {
+      break;
+    }
+    cursor = end + closeTag.length;
+  }
+  return out;
+}
+
+/**
+ * Extract the user-authored portion of a prompt when an external host (such as
+ * Causyne Game Super Agent) wraps a user message with multi-paragraph system
+ * instructions or XML context blocks. Uses purely linear index scans (ReDoS-free).
+ */
+function extractUserAuthoredIntent(prompt: string): string {
+  let text = prompt;
+  for (const tag of STRUCTURED_HARNESS_TAGS) {
+    if (text.includes(`<${tag}`)) {
+      text = stripTaggedBlockLinear(text, tag);
+    }
+  }
+  // If this is a structured harness envelope containing Super Agent workflow rules,
+  // isolate the trailing user request block so system guidance ("read-only reference",
+  // "without edits", "do not call ...") never trips the user-intent read-only guard.
+  const hasHarnessDirectives =
+    text.includes('openmotion_read_workflow')
+    || text.includes('openmotion_game_')
+    || text.includes('openmotion_assets_use')
+    || text.includes('openmotion_get_project')
+    || text.includes('openmotion://workflow/');
+  if (hasHarnessDirectives) {
+    const userMarkers = ['\nUser request:', '\nUser message:', '\n## User', '\nUser:'];
+    for (const marker of userMarkers) {
+      const idx = text.lastIndexOf(marker);
+      if (idx >= 0) {
+        return text.slice(idx + marker.length).trim();
+      }
+    }
+    // No separate user marker found in a system-directed harness prompt: do not
+    // misclassify host system rules as a user "explain only / no execution" order.
+    return '';
+  }
+  return text;
+}
+
 export function isNoExecutionPrompt(prompt?: string | null): boolean {
   if (!prompt || typeof prompt !== 'string') return false;
-  const cleaned = prompt
+  const userText = extractUserAuthoredIntent(prompt);
+  if (!userText.trim()) return false;
+  const cleaned = userText
     .replace(SCOPED_TEST_PROHIBITION, ' ')
     .replace(SCOPED_BACKTICK_EXCLUSION, ' ')
     .replace(SCOPED_PATH_EXCLUSION, ' ')
@@ -42,7 +115,7 @@ export function isNoExecutionPrompt(prompt?: string | null): boolean {
 
 export function isReadOnlyOrExplanatoryPrompt(prompt?: string | null): boolean {
   if (!prompt || typeof prompt !== 'string') return false;
-  const trimmed = prompt.trim();
+  const trimmed = extractUserAuthoredIntent(prompt).trim();
   if (trimmed.length === 0) return false;
   if (isNoExecutionPrompt(trimmed)) return true;
   if (!INQUIRY_WORDS.test(trimmed)) return false;
@@ -78,7 +151,7 @@ export function readOnlyScopeError(
   const noExecution = isNoExecutionPrompt(p);
 
   if (noExecution) {
-    if (tool === 'fs_read' || tool === 'doc_read') return null;
+    if (tool === 'fs_read' || tool === 'doc_read' || tool === 'tool_search') return null;
     return 'The user explicitly requested an explanation without action execution; modifying files or executing commands is not authorized.';
   }
 

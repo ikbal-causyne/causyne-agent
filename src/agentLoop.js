@@ -83,6 +83,7 @@ import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from
 import { StallGuardController } from './stallGuard.js';
 import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments } from './historyPruner.js';
 import { isOutputRecoveryRead } from './outputRecovery.js';
+import { autonomyModeToPreset, getPermissionPresetDescriptor, normalizePermissionPreset, presetToAutonomyMode, renderPermissionPolicyContext, resolveConfigPermissionPreset } from './permissionPresets.js';
 import { isPlanReviewHandoff, isPlanningOnlyRequest } from './taskContinuation.js';
 export function noncachedTokens(usage) {
     if (!usage)
@@ -136,10 +137,10 @@ ${AGENT_USER_POLICY}
 - **Code Quality**: Write clear, runnable, idiomatic code following existing project conventions without trivial inline comments or TODO placeholders. Preserve unrelated behavior.
 - **Planning & Decisions**: Batch independent read-only calls together. Use \`update_plan\` only for genuinely complex multi-stage implementations (keep one step \`in_progress\`). Use \`request_decision\` only when a material architecture/product/security choice genuinely blocks progress.
 - **Git Commits**: Follow the target repository's commit message conventions and project instructions (such as \`AGENTS.md\` or \`git log\`) when committing changes.
-- **Autonomy & Safety Boundaries**:
-  - **Mode A (Passive)**: Ask permission before mutating files, running shell commands, or installing dependencies.
-  - **Mode B (Supervised)**: Ordinary dev dependencies allowed; ask before OS-level changes or \`sudo\`.
-  - **Mode C (Autonomous)**: Execute ordinary in-scope work independently; whole-file/directory deletion, hard policy blocks, and workspace boundaries still require approval/compliance. Avoid interactive shell flags; use non-interactive flags (\`-y\`).
+- **Permission Presets & Safety Boundaries**:
+  - **Read Only (\`read-only\`)**: Inspect files, search code, and read documentation only; file modifications and mutating shell commands are blocked.
+  - **Workspace Write (\`workspace-write\`)**: Read and edit files scoped to the active workspace; ask approval before dangerous operations, OS-level changes, or \`sudo\`.
+  - **Full access (\`danger-full-access\`)**: Execute ordinary in-scope workspace edits and commands directly; whole-file/directory deletion, credential safeguards, hard policy blocks, and workspace boundaries remain enforced. Avoid interactive shell flags; use non-interactive flags (\`-y\`).
   - **SSRF**: Never fetch cloud metadata (169.254.169.254, metadata.google.internal) or private LAN ranges. Loopback (\`localhost\`, \`127.0.0.1\`, \`::1\`) is permitted for local dev verification.
   - **Tool Schema Discipline**: Invoke only active Causyne or permitted peer tools using exact schema parameter names and valid JSON (no unescaped newlines or trailing commas). Respect BYOK token limits.
 
@@ -409,6 +410,9 @@ export class AgentLoop {
         this.peerMcpServers = Array.isArray(options.peerMcpServers)
             ? [...options.peerMcpServers]
             : [];
+        this.hostSystemInstructions = typeof options.hostSystemInstructions === 'string' && options.hostSystemInstructions.trim()
+            ? options.hostSystemInstructions.trim()
+            : null;
         this.config = loadConfig();
         applyProviderOverrides(this.config, this.providerOverride, this.modelOverride);
         if (this.variantOverride) {
@@ -909,13 +913,40 @@ export class AgentLoop {
             }
         }
     }
+    activePermissionPreset() {
+        const fromOverride = normalizePermissionPreset(this.autonomyOverride);
+        if (fromOverride)
+            return fromOverride;
+        return resolveConfigPermissionPreset(this.config, 'danger-full-access');
+    }
     setAutonomyMode(mode) {
-        const normalized = String(mode || '').trim().toUpperCase();
-        if (!['A', 'B', 'C'].includes(normalized)) {
-            throw new Error('autonomy mode must be A, B, or C');
+        const preset = normalizePermissionPreset(mode);
+        if (!preset) {
+            throw new Error('permission preset must be read-only, workspace-write, or danger-full-access (or A, B, C)');
         }
+        const normalized = presetToAutonomyMode(preset);
         this.autonomyOverride = normalized;
         this.config.autonomyMode = normalized;
+        this.config.permissionPreset = preset;
+        if (this.sandbox) {
+            this.sandbox.autonomyMode = normalized;
+            this.sandbox.permissionPreset = preset;
+        }
+    }
+    setPermissionPreset(rawPreset) {
+        const preset = normalizePermissionPreset(rawPreset);
+        if (!preset) {
+            throw new Error('permission preset must be read-only, workspace-write, or danger-full-access');
+        }
+        const mode = presetToAutonomyMode(preset);
+        this.autonomyOverride = mode;
+        this.config.autonomyMode = mode;
+        this.config.permissionPreset = preset;
+        if (this.sandbox) {
+            this.sandbox.autonomyMode = mode;
+            this.sandbox.permissionPreset = preset;
+        }
+        return preset;
     }
     /**
      * A provider for UTILITY work — condensation, classification, filtering.
@@ -987,9 +1018,9 @@ export class AgentLoop {
         const prefetched = new Map();
         if (!Array.isArray(toolCalls) || toolCalls.length < 2)
             return prefetched;
-        // Mode A promises approval before every tool, including reads. Starting a
+        // Read Only promises approval before every tool, including reads. Starting a
         // read here would execute it before the serial approval and hook gates.
-        if ((this.config.autonomyMode || 'C') === 'A')
+        if (this.activePermissionPreset() === 'read-only')
             return prefetched;
         const eligible = [];
         for (const toolCall of toolCalls) {
@@ -1142,11 +1173,13 @@ export class AgentLoop {
         const assessment = await coldObserver.evaluateMutation(tool, args, { workspaceRoot: this.workspaceRoot });
         if (assessment.veto)
             return false;
-        const isModeC = (this.config.autonomyMode || 'C') === 'C';
+        const activePreset = this.activePermissionPreset();
+        const isFullAccess = activePreset === 'danger-full-access';
         const needsApproval = enterpriseDecision.effect === 'ask'
-            || (!isModeC && uncertain)
+            || (!isFullAccess && uncertain)
             || requiresToolApproval({
-                mode: this.config.autonomyMode || 'C', tool, args,
+                permissionPreset: activePreset,
+                mode: presetToAutonomyMode(activePreset), tool, args,
                 risk: assessment.requiresConfirmation ? 'dangerous' : validation.risk,
                 heavyDownload: false, standingApproval: this.isAlwaysAllowed(tool)
             });
@@ -1574,8 +1607,22 @@ export class AgentLoop {
     }
     updateTierLimits() {
         this.config = loadConfig();
-        if (this.autonomyOverride)
-            this.config.autonomyMode = this.autonomyOverride;
+        if (this.autonomyOverride) {
+            const overridePreset = normalizePermissionPreset(this.autonomyOverride);
+            if (overridePreset) {
+                this.config.permissionPreset = overridePreset;
+                this.config.autonomyMode = presetToAutonomyMode(overridePreset);
+            }
+            else {
+                this.config.autonomyMode = this.autonomyOverride;
+            }
+        }
+        const syncedPreset = resolveConfigPermissionPreset(this.config, 'workspace-write');
+        this.config.permissionPreset = syncedPreset;
+        if (this.sandbox) {
+            this.sandbox.permissionPreset = syncedPreset;
+            this.sandbox.autonomyMode = presetToAutonomyMode(syncedPreset);
+        }
         applyProviderOverrides(this.config, this.providerOverride, this.modelOverride);
         if (this.variantOverride) {
             this.config.reasoningEffort = this.variantOverride;
@@ -2100,7 +2147,7 @@ export class AgentLoop {
         if (!this.currentTaskPrompt && this.userPrompt) {
             this.currentTaskPrompt = this.userPrompt;
         }
-        const isAutonomousMode = (this.config.autonomyMode || 'C') === 'C';
+        const isAutonomousMode = this.activePermissionPreset() === 'danger-full-access';
         const recoveryPaths = new Set();
         let modelCallIndex = 0;
         let softUsageNoticeIssued = false;
@@ -2264,7 +2311,8 @@ export class AgentLoop {
                 // All transports receive the same compact catalog and selected host
                 // schemas. Peer-native tools and native schema deferral remain provider
                 // features; neither changes host authorization or schema selection.
-                const eligibleTools = await getDynamicTools(this.config.autonomyMode, this.llm.supportsVision, {
+                const activePreset = this.activePermissionPreset();
+                const eligibleTools = await getDynamicTools(activePreset, this.llm.supportsVision, {
                     grantAllTools: true,
                     allowedTools: this.sandbox.allowedTools,
                     deniedTools: this.config.deniedTools
@@ -2297,7 +2345,8 @@ export class AgentLoop {
                     }
                 }
                 // Dynamically inject the absolute latest System context
-                const autonomyMode = this.config.autonomyMode || 'C';
+                const activePresetDesc = getPermissionPresetDescriptor(activePreset);
+                const permissionPolicyLine = renderPermissionPolicyContext(activePreset, this.workspaceRoot);
                 const allowedPaths = this.sandbox.grantAllAccess
                     ? "/ (ALL ACCESS GRANTED - You can read/write anywhere EXCEPT system protected folders like /etc or /System)"
                     : (this.sandbox.workspacePaths ? this.sandbox.workspacePaths.join(', ') : this.workspaceRoot);
@@ -2475,13 +2524,14 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     // time a different skill is invoked. This one is stable for the task,
                     // so it anchors too.
                     ...(skillSystemMessage(this.activeSkill) || []),
+                    ...(this.hostSystemInstructions ? [{ role: 'system', content: this.hostSystemInstructions }] : []),
                     // [5] VOLATILE tail — the only bytes that may differ between steps:
                     // autonomy/workspace paths (change via config), live shared browser
                     // state, and persistent memory (grows via memory_write mid-task).
                     // Kept LAST and UNcached so a change here never invalidates [1]-[3].
                     {
                         role: 'system',
-                        content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}CURRENT AUTONOMY MODE: ${autonomyMode}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)${sharedBrowserPrompt}${memoryContext ? `\n\n◆ PERSISTENT MEMORY (workspace-relevant notes — actual repository files and docs on disk always override memory if anything conflicts):\n${memoryContext}` : ''}`
+                        content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}PERMISSION PRESET: ${activePresetDesc.label} (${activePreset})\n${permissionPolicyLine}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)${sharedBrowserPrompt}${memoryContext ? `\n\n◆ PERSISTENT MEMORY (workspace-relevant notes — actual repository files and docs on disk always override memory if anything conflicts):\n${memoryContext}` : ''}`
                     }
                 ];
                 // Dev-only visibility into what fills each step's prompt. Set
@@ -4185,8 +4235,9 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     // 4-Layer Security Sandbox Validation
                     // 2. Sandbox Security Validation (CRITICAL FIX: Prevent Infinite Loop on Block)
                     let validation = this.sandbox.validate(functionName, args);
+                    const recoveryCandidatePath = args.path ?? args.file_path ?? args.target ?? args.dir;
                     if (!validation.allowed && /^Path outside allowed workspace:/.test(validation.reason || '')
-                        && isOutputRecoveryRead(functionName, args.path, recoveryPaths)) {
+                        && isOutputRecoveryRead(functionName, recoveryCandidatePath, recoveryPaths)) {
                         validation = { allowed: true, risk: 'safe', reason: 'Read exact tool output referenced by this session' };
                     }
                     if (!validation.allowed) {
@@ -4370,14 +4421,16 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                         });
                         continue;
                     }
-                    // A standing grant can avoid repeat prompts in supervised modes.
-                    // Mode C is autonomous for in-scope work. Whole-file deletion asks
+                    // A standing grant can avoid repeat prompts in Workspace Write.
+                    // Full access runs in-scope work directly. Whole-file deletion asks
                     // unless this session explicitly granted the fs_delete tool; a broad
                     // shell grant cannot authorize deletion. Sandbox denials and observer
                     // vetoes have already run and are never lifted by prompt policy.
+                    const stepPreset = this.activePermissionPreset();
                     const standingApproval = this.isAlwaysAllowed(functionName);
                     let needsToolApproval = requiresToolApproval({
-                        mode: this.config.autonomyMode || 'C',
+                        permissionPreset: stepPreset,
+                        mode: presetToAutonomyMode(stepPreset),
                         tool: functionName,
                         args,
                         risk: validation.risk,
@@ -4409,7 +4462,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                             reason: enterpriseDecision.reason
                         });
                     }
-                    if (standingApproval && !needsToolApproval && this.config.autonomyMode !== 'C' && enterpriseDecision.effect !== 'allow') {
+                    if (standingApproval && !needsToolApproval && stepPreset !== 'danger-full-access' && enterpriseDecision.effect !== 'allow') {
                         auditLog.log({
                             event: 'approval_auto_granted', taskId: this.taskId,
                             tool: functionName, risk: validation.risk, reason: 'allow_always'
@@ -4706,7 +4759,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     }
                     // Sovereign 100-Step Circuit Breaker Checkpoint Gate
                     if (this.consecutiveCommands === 100 && !this.circuitBreakerUnlocked) {
-                        if (this.config.autonomyMode === 'C') {
+                        if (this.activePermissionPreset() === 'danger-full-access') {
                             this.circuitBreakerUnlocked = true;
                             this.emitEvent({ type: 'status', message: `Continuing within the configured ${this.maxSteps}-step task limit.` });
                         }
@@ -4737,7 +4790,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     }
                     // Sovereign Tier Budget Extension Checkpoint Gate
                     if (this.stepsCompleted >= this.maxSteps && !this.stopRequested) {
-                        if (this.config.autonomyMode === 'C') {
+                        if (this.activePermissionPreset() === 'danger-full-access') {
                             this.stopRequested = true;
                             this.emitEvent({ type: 'error', message: `Task reached the configured ${this.maxSteps}-step limit without verified completion.` });
                         }
@@ -4837,11 +4890,12 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                         // Per tool, not one number for all of them. A build log and a
                         // source file are not equally worth their space in the window.
                         // Compatibility fallback preserves complete output when primary store is unavailable.
+                        const isRecoveryRead = functionName === 'fs_read' && isOutputRecoveryRead(functionName, args?.path ?? args?.file_path ?? args?.target, recoveryPaths);
                         const MAX_RESULT_CHARS = resultCapFor(functionName);
-                        const inlineLimit = Math.min(MAX_RESULT_CHARS, functionName === 'fs_read_skill' ? 16000 : functionName === 'tool_search' ? 8000 : 2500);
+                        const inlineLimit = Math.min(MAX_RESULT_CHARS, functionName === 'fs_read_skill' || functionName === 'fs_read' ? 16000 : functionName === 'tool_search' ? 8000 : 2500);
                         const originalFingerprint = createHash('sha256').update(resultString).digest('hex');
                         let spill = null;
-                        if (resultString.length > inlineLimit) {
+                        if (!isRecoveryRead && resultString.length > inlineLimit) {
                             const document = renderSpillDocument(result, { taskId: this.taskId, step: this.stepsCompleted, tool: functionName });
                             const store = inlineLimit > 2500 ? new ToolOutputStore({ maxChars: inlineLimit, maxLines: 400, maxBytes: Math.max(50 * 1024, inlineLimit * 4) }) : defaultToolOutputStore;
                             const stored = processToolOutputWithStore(this.taskId, toolCall.id, document, store);
@@ -5250,6 +5304,8 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
             apiKey: nextRoute.apiKey
         };
         delete this.config.baseUrl;
+        delete this.config.reasoningEffort;
+        delete this.config.reasoningBudgetTokens;
         this.llm = this.initializeProvider();
         this._utilityLlm = null;
         this.consecutiveFailures = 0;

@@ -129,9 +129,9 @@ test('agent loop: the briefing sits in the VOLATILE block, not a cached anchor',
   // Session state changes as the task runs. Putting it in a cache-anchored
   // system block would invalidate the whole cached prefix every time the agent
   // touched a screen — undoing Part I to deliver Part II.
-  const volatileBlock = AGENT_LOOP.slice(AGENT_LOOP.indexOf('CURRENT AUTONOMY MODE'));
+  const volatileBlock = AGENT_LOOP.slice(AGENT_LOOP.indexOf('PERMISSION PRESET:'));
   assert.ok(
-    AGENT_LOOP.includes('${describeSession(this.taskId)}CURRENT AUTONOMY MODE'),
+    AGENT_LOOP.includes('${describeSession(this.taskId)}PERMISSION PRESET:'),
     'the resume briefing is no longer attached to the volatile tail'
   );
   assert.ok(

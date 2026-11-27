@@ -1,0 +1,31 @@
+{
+  "//": "Strict TypeScript compiler for Causyne Skybridge browser client modules. Emits readable native ES Modules beside source with zero bundler.",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "sourceMap": false,
+    "noEmitOnError": true,
+    "newLine": "lf"
+  },
+  "include": [
+    "src/web/client/**/*.ts"
+  ]
+}

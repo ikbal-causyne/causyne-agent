@@ -363,11 +363,11 @@ describe('Chatbox TUI Fixes Verification', () => {
 
     const prev = surface.stage.prev.map((r: string) => stripAnsi(r));
     const placeholderIdx = prev.findIndex((r: string) => r.includes(`try "${prompt.example}"`));
-    const buildIdx = prev.findIndex((r: string) => r.includes('Build C'));
+    const buildIdx = prev.findIndex((r: string) => r.includes('Full access'));
     assert.ok(placeholderIdx !== -1, 'Top placeholder row ("try \\"explain...\\"") must remain intact in stage');
-    assert.ok(buildIdx !== -1, 'Bottom controls row ("Build C") must remain intact in stage');
-    assert.equal(buildIdx - placeholderIdx, 2, 'Chatbox must have intact separator row between placeholder and Build C');
-    assert.equal(surface.stage.cursor, placeholderIdx, 'Terminal cursor must rest on the input/placeholder row, never on Build C');
+    assert.ok(buildIdx !== -1, 'Bottom controls row ("Full access") must remain intact in stage');
+    assert.equal(buildIdx - placeholderIdx, 2, 'Chatbox must have intact separator row between placeholder and Full access');
+    assert.equal(surface.stage.cursor, placeholderIdx, 'Terminal cursor must rest on the input/placeholder row, never on Full access');
 
     surface.close();
   });
@@ -457,9 +457,9 @@ describe('Chatbox TUI Fixes Verification', () => {
 
       const prev = surface.stage.prev.map((r: string) => stripAnsi(r));
       const placeholderIdx = prev.findIndex((r: string) => r.includes(`try "${prompt.example}"`) || r.includes('ask anything'));
-      const buildIdx = prev.findIndex((r: string) => r.includes('Build C'));
+      const buildIdx = prev.findIndex((r: string) => r.includes('Full access'));
       assert.ok(placeholderIdx >= 1, `Iteration ${iter}: placeholder row must exist with padTop row above it`);
-      assert.ok(buildIdx !== -1, `Iteration ${iter}: Build C row must exist`);
+      assert.ok(buildIdx !== -1, `Iteration ${iter}: Full access row must exist`);
       assert.equal(buildIdx - placeholderIdx, 2, `Iteration ${iter}: chatbox rows must not be clipped`);
       assert.equal(surface.stage.cursor, placeholderIdx, `Iteration ${iter}: cursor must sit on placeholder row`);
 

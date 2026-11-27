@@ -239,11 +239,8 @@ export class OverlayStack {
 /**
  * A layer as framed rows, for a normal-buffer live region.
  *
- * drawPanel() paints absolutely into a cell grid, which only exists inside an
- * alternate-buffer app — and chat does not have one any more (UX-01). This is the
- * same panel expressed as styled `string[]`, which is all a live region can
- * append. It is the shape openclaw draws its pickers in: extra lines in the
- * composed frame, not a floating window.
+ * drawPanel() paints into a cell grid, while live-region rendering expresses
+ * the same panel as styled `string[]` rows inside the composed frame.
  *
  * Every row is wrapped with `fill('surface', ...)` so that when a panel (such as
  * Message Actions) is overlaid onto the transcript viewport, its interior has an

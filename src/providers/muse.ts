@@ -59,6 +59,14 @@ export class MuseProvider extends OpenAICompatibleProvider {
     this.reasoningEffort = clampReasoningEffort(config.reasoningEffort, this.model);
   }
 
+  override supportsReasoningEffort(): boolean {
+    return /^muse-spark/i.test((this.model || '').trim());
+  }
+
+  override resolvePayloadReasoningEffort(): string | null {
+    return clampReasoningEffort(this.reasoningEffort, this.model);
+  }
+
   override audioAlternative(): string | null {
     if (this.supportsAudio) return null;
     return isContributorModel(this.model) ? 'muse-spark-1.2-contributor' : 'muse-spark-1.2';

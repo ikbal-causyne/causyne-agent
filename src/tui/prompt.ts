@@ -31,6 +31,7 @@ import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
 import { renderUsageCardRows, renderStatusCardRows, collectUsageCardData, type UsageCardData } from './usageCard.js';
 import { buildStatusText } from '../reporting.js';
+import { formatPermissionPresetLabel } from '../permissionPresets.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
 import { writeClipboardSync } from './clipboardSync.js';
@@ -174,7 +175,7 @@ export class ChatPrompt {
     this.onOpenVariant = opts.onOpenVariant || null;
     this.onOpenVariantList = opts.onOpenVariantList || null;
     this.messageActionLoop = opts.messageActionLoop || null;
-    this.getMode = opts.getMode || (() => 'B');
+    this.getMode = opts.getMode || (() => 'workspace-write');
 
     this.editor = new LineEditor();
     this.history = opts.history || new PromptHistory();
@@ -452,7 +453,8 @@ export class ChatPrompt {
     const status = this.renderer && this.renderer.status;
     if (!status) return null;
 
-    const mode = `${this.busy ? 'Working' : 'Build'} ${this.getMode()}`;
+    const presetLabel = formatPermissionPresetLabel(this.getMode());
+    const mode = this.busy ? `Working · ${presetLabel}` : presetLabel;
     const parts = [bold(paint('accent', mode))];
     if (status.model) parts.push(bold(paint('ink', status.model)));
     if (status.variant) parts.push(paint('accent', `[${status.variant}]`));
@@ -464,7 +466,7 @@ export class ChatPrompt {
     if (this.editor.lines.length > 1) details.push(`${this.editor.lines.length} lines`);
     const extra = details.length ? dim(`  ${GLYPHS.dot}  ${details.join(' · ')}`) : '';
     const withMeta = visibleWidth(base) + visibleWidth(extra) <= width ? base + extra : base;
-    const hints = dim('  Ctrl+G/⇧Tab mode · Alt+M model · Ctrl+T variant');
+    const hints = dim('  Ctrl+G/⇧Tab permissions · Alt+M model · Ctrl+T variant');
     const full = visibleWidth(withMeta) + visibleWidth(hints) <= width ? withMeta + hints : withMeta;
     return visibleWidth(full) > width ? truncate(full, width, GLYPHS.ellipsis) : full;
   }
@@ -909,7 +911,7 @@ export class ChatPrompt {
     const isControlCommand = this.isCommand(text) && new Set([
       '/stop', '/interrupt', '/new', '/model', '/models',
       '/variant', '/effort', '/reasoning', '/cortex',
-      '/gui', '/web', '/studio',
+      '/gui', '/web', '/studio', '/game',
       '/session', '/sessions', '/continuum', '/clear'
     ]).has(commandToken);
 

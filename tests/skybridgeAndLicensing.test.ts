@@ -551,12 +551,44 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.match(livePrompt, /browser_screenshot/);
       assert.match(livePrompt, /browser_read_page/);
 
-      // Web client script folds nativeStep notices into step timeline and filters degenerate "true" probes
+      // Modular Web GUI serves lightweight HTML + dedicated CSS stylesheets + native ES client modules
       const htmlCheck = await fetch(`${handle.origin}/`);
       const htmlSource = await htmlCheck.text();
-      assert.match(htmlSource, /addNativeStep/);
-      assert.match(htmlSource, /ev\.nativeStep === true/);
-      assert.match(htmlSource, /ensureModelPickerShell/);
+      assert.match(htmlSource, /<link rel="stylesheet" href="\/assets\/styles\/tokens\.css">/);
+      assert.match(htmlSource, /<script type="module" nonce="[^"]+" src="\/assets\/client\/main\.js"><\/script>/);
+      assert.equal(htmlSource.includes('innerHTML'), false);
+
+      // Static asset allowlist blocks traversal and unknown files
+      const badAsset = await fetch(`${handle.origin}/assets/client/..%2FskybridgeServer.js`);
+      assert.equal(badAsset.status, 404);
+
+      const [
+        chatStreamJs,
+        modelPickerJs,
+        studioShellJs,
+        sessionsJs,
+        stateJs,
+        smootherJs,
+        turnViewJs,
+        markdownJs
+      ] = await Promise.all([
+        fetch(`${handle.origin}/assets/client/chatStream.js`).then((r) => { assert.equal(r.status, 200); return r.text(); }),
+        fetch(`${handle.origin}/assets/client/modelPicker.js`).then((r) => { assert.equal(r.status, 200); return r.text(); }),
+        fetch(`${handle.origin}/assets/client/studioShell.js`).then((r) => { assert.equal(r.status, 200); return r.text(); }),
+        fetch(`${handle.origin}/assets/client/sessions.js`).then((r) => { assert.equal(r.status, 200); return r.text(); }),
+        fetch(`${handle.origin}/assets/client/state.js`).then((r) => { assert.equal(r.status, 200); return r.text(); }),
+        fetch(`${handle.origin}/assets/client/streamSmoother.js`).then((r) => { assert.equal(r.status, 200); return r.text(); }),
+        fetch(`${handle.origin}/assets/client/turnView.js`).then((r) => { assert.equal(r.status, 200); return r.text(); }),
+        fetch(`${handle.origin}/assets/client/markdown.js`).then((r) => { assert.equal(r.status, 200); return r.text(); })
+      ]);
+      const allClientCode = [
+        chatStreamJs, modelPickerJs, studioShellJs, sessionsJs,
+        stateJs, smootherJs, turnViewJs, markdownJs
+      ].join('\n');
+      assert.equal(allClientCode.includes('innerHTML'), false);
+      assert.match(chatStreamJs, /addNativeStep/);
+      assert.match(chatStreamJs, /ev\.nativeStep === true/);
+      assert.match(modelPickerJs, /ensureModelPickerShell/);
 
       // /api/models mirrors CLI live model chooser (ACP / BYOK / FREE tri-tab structure)
       const cliModelsRes = await fetch(`${handle.origin}/api/models`, { headers: authHeaders });
@@ -570,10 +602,10 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.ok(cliModelsBody.tabs.free.some((it: any) => it.label === 'openrouter/free'));
 
       // Panel resize must never hard-lock inline flexBasis (prevents close-after-stretch regression)
-      assert.ok(!htmlSource.includes('studioRoot.style.flexBasis = nextW'), 'panel resize must use --studio-w CSS variable, not inline flexBasis');
-      assert.match(htmlSource, /toggleStudioMaximize/);
-      assert.match(htmlSource, /saveCurrentSessionWorkspace/);
-      assert.match(htmlSource, /applySessionWorkspace/);
+      assert.ok(!studioShellJs.includes('studioRoot.style.flexBasis = nextW'), 'panel resize must use --studio-w CSS variable, not inline flexBasis');
+      assert.match(studioShellJs, /toggleStudioMaximize/);
+      assert.match(sessionsJs, /saveCurrentSessionWorkspace/);
+      assert.match(sessionsJs, /applySessionWorkspace/);
 
       // Per-session Changes (/api/diff?scope=session&sessionId=...) isolates files between Conversation A and Conversation B
       const sessARes = await fetch(`${handle.origin}/api/sessions`, {
@@ -639,13 +671,13 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
         'blender_apple/red_apple.blend',
         'src/demo.ts'
       ]);
-      assert.match(htmlSource, /TOKEN_STORE_KEY/);
-      assert.match(htmlSource, /syncExpandedStudioWidth/);
-      assert.match(htmlSource, /createStreamSmoother/);
-      assert.match(htmlSource, /createCollapsibleCard/);
-      assert.match(htmlSource, /createInlineFileChip/);
-      assert.match(htmlSource, /summarizeTimelineSteps/);
-      assert.match(htmlSource, /startInlineSessionRename/);
+      assert.match(stateJs, /TOKEN_STORE_KEY/);
+      assert.match(stateJs, /syncExpandedStudioWidth/);
+      assert.match(smootherJs, /createStreamSmoother/);
+      assert.match(turnViewJs, /createCollapsibleCard/);
+      assert.match(markdownJs, /createInlineFileChip/);
+      assert.match(turnViewJs, /summarizeTimelineSteps/);
+      assert.match(sessionsJs, /startInlineSessionRename/);
     } finally {
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });

@@ -25,7 +25,9 @@ import { auditLog } from './auditLog.js';
 import { isAcpProvider } from './providers/acp.js';
 import { isPiProvider } from './providers/pi.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
-import { runHeadlessTask, parsePermissionMode, parseMaxTurns, parseVariantOption } from './headlessCli.js';
+import { runHeadlessTask, parsePermissionPreset, parseMaxTurns, parseVariantOption } from './headlessCli.js';
+import { resolveConfigPermissionPreset } from './permissionPresets.js';
+import { reconcileConfigVariant } from './modelVariants.js';
 import { closeAll as closeAllMcpServers, setActiveWorkspace as setActiveMcpWorkspace } from './mcp/mcpRegistry.js';
 import { lspSessionManager } from './lsp/lspClient.js';
 import { backgroundTaskManager } from './backgroundTasks.js';
@@ -272,8 +274,8 @@ export async function runTask(task: string, options: RunTaskOptions = {}): Promi
   if (parsedVariant) loopOptions.variant = parsedVariant;
   const loop = new AgentLoop(conn, taskId, task, loopOptions);
 
-  const permMode = parsePermissionMode(options?.permissionMode);
-  if (permMode) loop.autonomyOverride = permMode;
+  const permPreset = parsePermissionPreset(options?.permissionMode);
+  if (permPreset) loop.setPermissionPreset(permPreset);
   const maxTurns = parseMaxTurns(options?.maxTurns);
   if (maxTurns !== undefined) loop.maxStepsCeiling = maxTurns;
 
@@ -329,18 +331,28 @@ export async function chatMode(options?: ChatModeOptions | null): Promise<void> 
   const parsedVariant = parseVariantOption(options?.variant);
   if (parsedVariant) loopOptions.variant = parsedVariant;
   let loop: any = new AgentLoop(conn, taskId, null, loopOptions);
-  const permMode = parsePermissionMode(options?.permissionMode);
-  if (permMode) {
-    loop.autonomyOverride = permMode;
+  const permPreset = parsePermissionPreset(options?.permissionMode);
+  if (permPreset) {
+    loop.setPermissionPreset(permPreset);
     loop.updateTierLimits();
   }
 
   const config = loop.config || loadConfig();
+  const prevSavedEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort : '';
+  const reconciledVariant = reconcileConfigVariant(config);
+  if (prevSavedEffort && reconciledVariant !== prevSavedEffort && !options?.variant) {
+    const persisted = loadConfig();
+    reconcileConfigVariant(persisted);
+    saveConfig(persisted);
+    loop.updateTierLimits?.();
+  }
+  const activePreset = resolveConfigPermissionPreset(config);
   const headerInfo: Record<string, any> = {
     version: `v${getPackageVersion()}`,
     provider: config.provider,
     model: config.model,
-    variant: typeof config.reasoningEffort === 'string' ? config.reasoningEffort : '',
+    variant: reconciledVariant,
+    permissionPreset: activePreset,
     autonomyMode: config.autonomyMode,
     tier: config.tier,
     workspace: loop.sandbox && loop.sandbox.grantAllAccess
@@ -401,7 +413,7 @@ export async function chatMode(options?: ChatModeOptions | null): Promise<void> 
         surface,
         messageActionLoop: loop,
         onInterrupt: () => loop.abort(),
-        getMode: () => loop.config?.autonomyMode || config.autonomyMode || 'B',
+        getMode: () => resolveConfigPermissionPreset(loop.config || config),
         onOpenMode: async () => {
           await openModeControl(prompt, loop);
           prompt?.refreshPinnedPanels?.(loop);

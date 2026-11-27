@@ -274,7 +274,28 @@ export function createWorktree(
   }
 
   try {
-    runGit(['worktree', 'add', '-b', branch, targetPath, baseCommit], repoRoot);
+    // Hardened checkout: disable repository hooks, fsmonitor, and clean/smudge filters
+    // so untrusted repository metadata cannot execute code during worktree creation.
+    runGit(
+      [
+        '-c', 'core.hooksPath=/dev/null',
+        '-c', 'core.fsmonitor=false',
+        'worktree', 'add', '--no-checkout', '-b', branch, targetPath, baseCommit
+      ],
+      repoRoot
+    );
+    runGit(
+      [
+        '-c', 'core.hooksPath=/dev/null',
+        '-c', 'core.fsmonitor=false',
+        '-c', 'filter.lfs.smudge=',
+        '-c', 'filter.lfs.clean=',
+        '-c', 'filter.lfs.process=',
+        '-c', 'filter.lfs.required=false',
+        'reset', '--hard', '--no-recurse-submodules', baseCommit
+      ],
+      targetPath
+    );
   } catch (err: unknown) {
     throw new Error(`Failed to create git worktree: ${gitErrorDetail(err)}`);
   }

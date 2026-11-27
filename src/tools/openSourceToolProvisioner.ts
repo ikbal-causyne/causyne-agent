@@ -300,7 +300,7 @@ export function searchCatalogue(intentOrQuery: string): OpenSourceToolProfile[] 
 export const openSourceToolProvisioner = {
   schema: {
     name: 'open_source_tool_provisioner',
-    description: 'Discover, evaluate hardware compatibility, and install open-source AI tools and models. Mode C authorizes in-scope installs; supervised modes require confirmation. Hardware, disk, and workspace checks still apply.',
+    description: 'Discover, evaluate hardware compatibility, and install open-source AI tools and models. Full access authorizes in-scope installs; Workspace Write requires confirmation. Hardware, disk, and workspace checks still apply.',
     parameters: {
       type: 'object',
       properties: {
@@ -319,7 +319,7 @@ export const openSourceToolProvisioner = {
         },
         confirm: {
           type: 'boolean',
-          description: 'Explicit confirmation for supervised modes. Mode C authorizes in-scope installs without this flag.'
+          description: 'Explicit confirmation in Workspace Write. Full access authorizes in-scope installs without this flag.'
         },
         forceAlternative: {
           type: 'boolean',

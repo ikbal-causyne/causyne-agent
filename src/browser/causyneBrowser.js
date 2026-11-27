@@ -754,13 +754,40 @@ export class CausyneBrowser {
     getWorkspace() {
         return this.workspace;
     }
-    async enqueueOperation(operation) {
+    async enqueueOperation(operation, signal) {
+        if (signal?.aborted) {
+            throw new Error('Browser operation aborted.');
+        }
         this.queuedOperations++;
         const previous = this.operationTail;
         let release;
         this.operationTail = new Promise(resolve => { release = resolve; });
-        await previous;
         try {
+            if (signal) {
+                await new Promise((resolve, reject) => {
+                    const onAbort = () => {
+                        reject(new Error('Browser operation aborted while waiting in queue.'));
+                    };
+                    if (signal.aborted) {
+                        onAbort();
+                        return;
+                    }
+                    signal.addEventListener('abort', onAbort, { once: true });
+                    previous.then(() => {
+                        signal.removeEventListener('abort', onAbort);
+                        resolve();
+                    }, () => {
+                        signal.removeEventListener('abort', onAbort);
+                        resolve();
+                    });
+                });
+            }
+            else {
+                await previous;
+            }
+            if (signal?.aborted) {
+                throw new Error('Browser operation aborted.');
+            }
             return await operation();
         }
         finally {
@@ -769,7 +796,7 @@ export class CausyneBrowser {
         }
     }
     async run(actions, options = {}) {
-        return this.enqueueOperation(() => this.runUnlocked(actions, options));
+        return this.enqueueOperation(() => this.runUnlocked(actions, options), options.signal);
     }
     async runUnlocked(actions, options = {}) {
         if (!Array.isArray(actions) || actions.length === 0 || actions.length > 40) {

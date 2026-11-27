@@ -19,7 +19,7 @@ process.once('exit', restoreTerminal);
 function shouldSkipAutoUpdateCheck(argv) {
   const tokens = Array.isArray(argv) ? argv.slice(2) : [];
   const skipTokens = new Set([
-    'acp', 'web', 'gui', 'studio', 'browser-mcp',
+    'acp', 'web', 'gui', 'studio', 'game', 'browser-mcp',
     'status', 'doctor', 'diff', 'license',
     'context', 'usage', 'checkpoints', 'undo', 'mcp', 'peers',
     'policy', 'audit', 'lsp', 'worktree', 'pr', 'rules', 'map',

@@ -119,9 +119,15 @@ export function classifyAgentError(error) {
         msg.includes('api key')) {
         return 'auth_error';
     }
+    if (errObj?.code === 'AGY_INVALID_MODEL_SELECTION') {
+        return 'invalid_request_error';
+    }
     if (msg.includes('400') ||
         msg.includes('invalid_parameter') ||
         msg.includes('invalid_request') ||
+        msg.includes('invalid model selection') ||
+        msg.includes('conflicts with --effort') ||
+        msg.includes('--effort is not supported') ||
         msg.includes('required property') ||
         msg.includes('bad request')) {
         return 'invalid_request_error';

@@ -18,6 +18,7 @@ const pendingClients = new Map();
 const statuses = new Map();
 const connectionEpochs = new Map();
 const failureBackoff = new Map();
+const sessionServers = new Map();
 let activeWorkspaceRoot = null;
 export function setActiveWorkspace(workspace) {
     if (typeof workspace !== 'string' || !workspace.trim() || workspace.includes('\0'))
@@ -282,6 +283,66 @@ export function configuredServers() {
         return [];
     return servers.map(normalizeDefinition).filter((server) => server !== null);
 }
+function findSessionServer(name) {
+    for (const map of sessionServers.values()) {
+        const found = map.get(name);
+        if (found)
+            return found;
+    }
+    return undefined;
+}
+function effectiveServers() {
+    const base = configuredServers();
+    if (sessionServers.size === 0)
+        return base;
+    const seen = new Set(base.map(server => server.name));
+    const merged = [...base];
+    for (const map of sessionServers.values()) {
+        for (const def of map.values()) {
+            if (seen.has(def.name))
+                continue;
+            seen.add(def.name);
+            merged.push(def);
+        }
+    }
+    return merged;
+}
+/**
+ * Register in-memory, session-scoped MCP servers passed by a trusted ACP host
+ * (such as Causyne Game). Never written to user config.json; disconnected when
+ * the ACP session closes.
+ */
+export function registerSessionMcpServers(sessionId, definitions) {
+    if (!sessionId || !Array.isArray(definitions) || definitions.length === 0)
+        return [];
+    const bucket = sessionServers.get(sessionId) ?? new Map();
+    const added = [];
+    for (const raw of definitions) {
+        const normalized = normalizeDefinition(raw);
+        if (!normalized)
+            continue;
+        bucket.set(normalized.name, normalized);
+        failureBackoff.delete(normalized.name);
+        added.push(normalized.name);
+    }
+    if (bucket.size > 0)
+        sessionServers.set(sessionId, bucket);
+    return added;
+}
+export async function unregisterSessionMcpServers(sessionId) {
+    const bucket = sessionServers.get(sessionId);
+    if (!bucket)
+        return;
+    const names = [...bucket.keys()];
+    sessionServers.delete(sessionId);
+    const configured = new Set(configuredServers().map(server => server.name));
+    await Promise.allSettled(names.map(async (name) => {
+        if (configured.has(name) || findSessionServer(name))
+            return;
+        await disconnectServer(name);
+        statuses.delete(name);
+    }));
+}
 export function addServer(value) {
     const problem = McpClient.validateDefinition(value);
     if (problem)
@@ -319,10 +380,14 @@ export function removeServer(name) {
 }
 export function isServerGranted(name) {
     const definition = configuredServers().find(server => server.name === name);
-    if (!definition || definition.enabled === false)
-        return false;
-    const consent = consentRecord(config().mcpConsent?.[name]);
-    return consent?.digest === definitionDigest(definition);
+    if (definition) {
+        if (definition.enabled === false)
+            return false;
+        const consent = consentRecord(config().mcpConsent?.[name]);
+        return consent?.digest === definitionDigest(definition);
+    }
+    const sessionDef = findSessionServer(name);
+    return Boolean(sessionDef && sessionDef.enabled !== false);
 }
 export function grantServer(name) {
     const definition = configuredServers().find(server => server.name === name);
@@ -368,7 +433,7 @@ export function parseToolName(name) {
     return { server, tool };
 }
 export async function connectServer(name) {
-    const definition = configuredServers().find(server => server.name === name);
+    const definition = effectiveServers().find(server => server.name === name);
     if (!definition)
         throw new Error(`no MCP server named "${name}" is configured`);
     if (definition.enabled === false) {
@@ -403,7 +468,7 @@ export async function connectServer(name) {
         statuses.set(name, { state: 'connecting' });
         try {
             await client.connect();
-            const current = configuredServers().find(server => server.name === name);
+            const current = effectiveServers().find(server => server.name === name);
             const connectionIsCurrent = connectionEpoch(name) === startedAtEpoch
                 && current !== undefined
                 && definitionDigest(current) === definitionDigest(definition)
@@ -463,7 +528,7 @@ export async function refreshServer(name) {
     return client.refreshTools();
 }
 export async function discoverTools() {
-    const granted = configuredServers().filter(server => isServerGranted(server.name));
+    const granted = effectiveServers().filter(server => isServerGranted(server.name));
     const now = Date.now();
     const results = await Promise.all(granted.map(async (server) => {
         const backoff = failureBackoff.get(server.name);
@@ -495,7 +560,7 @@ export function resolveMcpTool(name) {
     const parsed = parseToolName(name);
     if (!parsed)
         return null;
-    const definition = configuredServers().find(server => server.name === parsed.server);
+    const definition = effectiveServers().find(server => server.name === parsed.server);
     if (!definition)
         return null;
     return {
@@ -575,6 +640,7 @@ export function closeAllSync() {
     connecting.clear();
     pendingClients.clear();
     failureBackoff.clear();
+    sessionServers.clear();
     for (const client of all) {
         try {
             client.closeSync();
@@ -591,6 +657,7 @@ export async function closeAll() {
     connecting.clear();
     pendingClients.clear();
     failureBackoff.clear();
+    sessionServers.clear();
     await Promise.allSettled(clients.map(client => client.close()));
     statuses.clear();
     connectionEpochs.clear();
