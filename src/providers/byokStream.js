@@ -225,8 +225,10 @@ async function consumeSseStream(response, providerLabel, maxBytes, onEvent, sign
             }
         }
         flushEvent();
-    }
-    finally {
+    } catch (error) {
+        await reader.cancel().catch(() => {});
+        throw error;
+    } finally {
         reader.releaseLock();
     }
 }
@@ -285,8 +287,10 @@ async function consumeNdjsonStream(response, providerLabel, maxBytes, onObject, 
         if (buffer.trim()) {
             processLine(buffer);
         }
-    }
-    finally {
+    } catch (error) {
+        await reader.cancel().catch(() => {});
+        throw error;
+    } finally {
         reader.releaseLock();
     }
 }

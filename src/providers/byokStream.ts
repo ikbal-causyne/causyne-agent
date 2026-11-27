@@ -291,6 +291,9 @@ async function consumeSseStream(
       }
     }
     flushEvent();
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -361,6 +364,9 @@ async function consumeNdjsonStream(
     if (buffer.trim()) {
       processLine(buffer);
     }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
   } finally {
     reader.releaseLock();
   }
