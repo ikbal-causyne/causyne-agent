@@ -242,3 +242,26 @@ describe('Sector 6B — BYOK Real-Time SSE & NDJSON Streaming', () => {
     });
   });
 });
+
+test('Ollama NDJSON reports provider errors instead of returning partial success', async () => {
+  await withMockFetch(async () => makeStreamResponse([
+    '{"message":{"content":"partial"},"done":false}\n',
+    '{"error":"model unavailable"}\n'
+  ], 'application/x-ndjson'), async () => {
+    const provider = new OllamaProvider({ model: 'qwen3:8b' });
+    await assert.rejects(provider.chat([{ role: 'user', content: 'hi' }], {
+      onChunk: () => {}
+    }), /model unavailable/);
+  });
+});
+
+test('Ollama NDJSON propagates application callback failures', async () => {
+  await withMockFetch(async () => makeStreamResponse([
+    '{"message":{"content":"partial"},"done":false}\n'
+  ], 'application/x-ndjson'), async () => {
+    const provider = new OllamaProvider({ model: 'qwen3:8b' });
+    await assert.rejects(provider.chat([{ role: 'user', content: 'hi' }], {
+      onChunk: () => { throw new Error('callback fixture failure'); }
+    }), /callback fixture failure/);
+  });
+});
