@@ -58,7 +58,7 @@ export function atomicRenameSync(
 ): void {
   const platform = options.platform ?? process.platform;
   const maxRetries = platform === 'win32'
-    ? Math.max(0, options.maxRetries ?? DEFAULT_RENAME_BACKOFF_MS.length)
+    ? (Number.isSafeInteger(options.maxRetries) ? Math.min(100, Math.max(0, options.maxRetries ?? 0)) : DEFAULT_RENAME_BACKOFF_MS.length)
     : 0;
 
   let attempt = 0;
@@ -88,7 +88,7 @@ export async function atomicRename(
 ): Promise<void> {
   const platform = options.platform ?? process.platform;
   const maxRetries = platform === 'win32'
-    ? Math.max(0, options.maxRetries ?? DEFAULT_RENAME_BACKOFF_MS.length)
+    ? (Number.isSafeInteger(options.maxRetries) ? Math.min(100, Math.max(0, options.maxRetries ?? 0)) : DEFAULT_RENAME_BACKOFF_MS.length)
     : 0;
 
   let attempt = 0;
