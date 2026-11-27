@@ -1,7 +1,43 @@
 import { copyText } from './dom.js';
 import { state } from './state.js';
-import { isSafeHttpUrl, parseWorkspaceFileHref } from './validators.js';
+import { parseWorkspaceFileHref } from './validators.js';
 import type { WorkspaceFileHrefInfo } from './types.js';
+
+function toSafeExternalHref(raw: string): string | null {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  const normalized = parsed.href;
+  if (!normalized.startsWith('https://') && !normalized.startsWith('http://')) return null;
+  try {
+    return encodeURI(decodeURI(normalized));
+  } catch {
+    return encodeURI(normalized);
+  }
+}
+
+function createSafeExternalAnchor(rawHref: string, labelText: string): HTMLAnchorElement | null {
+  const safeHref = toSafeExternalHref(rawHref);
+  if (!safeHref) return null;
+  const a = document.createElement('a');
+  if (safeHref.startsWith('https://')) {
+    a.href = `https://${safeHref.slice(8)}`;
+  } else if (safeHref.startsWith('http://')) {
+    a.href = `http://${safeHref.slice(7)}`;
+  } else {
+    return null;
+  }
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = labelText;
+  return a;
+}
 
 export interface MarkdownCallbacks {
   openFile(relPath: string): void | Promise<void>;
@@ -107,14 +143,10 @@ export function appendInlineNodes(parent: HTMLElement, text: string): void {
       if (mid > i + 1 && end > mid + 2) {
         const label = text.slice(i + 1, mid);
         const href = text.slice(mid + 2, end).trim();
-        if (isSafeHttpUrl(href)) {
+        const extAnchor = createSafeExternalAnchor(href, label.replace(/^`|`$/g, ''));
+        if (extAnchor) {
           flush();
-          const a = document.createElement('a');
-          a.href = href;
-          a.target = '_blank';
-          a.rel = 'noopener noreferrer';
-          a.textContent = label.replace(/^`|`$/g, '');
-          parent.appendChild(a);
+          parent.appendChild(extAnchor);
           i = end + 1;
           continue;
         }
@@ -136,14 +168,10 @@ export function appendInlineNodes(parent: HTMLElement, text: string): void {
         trail = (rawUrl[rawUrl.length - 1] || '') + trail;
         rawUrl = rawUrl.slice(0, -1);
       }
-      if (isSafeHttpUrl(rawUrl)) {
+      const rawAnchor = createSafeExternalAnchor(rawUrl, rawUrl);
+      if (rawAnchor) {
         flush();
-        const a = document.createElement('a');
-        a.href = rawUrl;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        a.textContent = rawUrl;
-        parent.appendChild(a);
+        parent.appendChild(rawAnchor);
         if (trail) buf += trail;
         i = j;
         continue;

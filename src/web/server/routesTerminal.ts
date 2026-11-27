@@ -134,7 +134,12 @@ export async function handleTerminalRoutes(
         typed: body.typed !== false
       });
       if (!result.ok) {
-        sendJson(res, 400, { ok: false, error: result.error, code: result.code });
+        const safeErr = result.code === 'SESSION_EXITED'
+          ? 'Terminal session has already exited.'
+          : result.code === 'TAKEN_OVER'
+            ? 'Terminal session was taken over by the user.'
+            : 'Unable to write to terminal session.';
+        sendJson(res, 400, { ok: false, error: safeErr, code: result.code });
         return true;
       }
       sendJson(res, 200, { ok: true, control: result.control });
@@ -162,7 +167,14 @@ export async function handleTerminalRoutes(
       return true;
     }
     const result = ptyTerminalManager.signalSession(id, sig as TerminalSignalName, 'user');
-    sendJson(res, result.ok ? 200 : 400, { ok: result.ok, error: result.error });
+    const safeErr = result.ok
+      ? undefined
+      : (result.code === 'SESSION_EXITED'
+        ? 'Terminal session has already exited.'
+        : result.code === 'SIGNAL_DENIED'
+          ? 'Requested signal is not permitted.'
+          : 'Unable to signal terminal session.');
+    sendJson(res, result.ok ? 200 : 400, { ok: result.ok, ...(safeErr ? { error: safeErr } : {}) });
     return true;
   }
 

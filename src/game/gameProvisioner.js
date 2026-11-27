@@ -270,8 +270,18 @@ async function readArchiveBytes(url, base, signal) {
     const { buffer } = await fetchHttpsBounded(resolved, { accept: 'application/octet-stream', 'user-agent': 'Causyne-Agent' }, ARCHIVE_LIMIT, 600_000, signal);
     return buffer;
 }
+function resolveTarExecutable() {
+    if (process.platform === 'win32') {
+        const sysRoot = process.env['SystemRoot'] || 'C:\\Windows';
+        const winTar = path.join(sysRoot, 'System32', 'tar.exe');
+        if (fsSync.existsSync(winTar))
+            return winTar;
+    }
+    return 'tar';
+}
 async function verifyTarSafety(archivePath) {
-    const { stdout } = await execFileAsync('tar', ['-tzf', archivePath], {
+    const { stdout } = await execFileAsync(resolveTarExecutable(), ['-tzf', path.basename(archivePath)], {
+        cwd: path.dirname(archivePath),
         maxBuffer: 16 * 1024 * 1024,
         windowsHide: true
     });
@@ -370,7 +380,8 @@ export async function installGameStudio(options) {
         try {
             await fs.writeFile(archivePath, bytes, { mode: 0o600 });
             await verifyTarSafety(archivePath);
-            await execFileAsync('tar', ['-xzf', archivePath, '-C', extractDir], {
+            await execFileAsync(resolveTarExecutable(), ['-xzf', path.basename(archivePath), '-C', path.basename(extractDir)], {
+                cwd: stageRoot,
                 maxBuffer: 16 * 1024 * 1024,
                 windowsHide: true
             });

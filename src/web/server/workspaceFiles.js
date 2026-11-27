@@ -216,8 +216,8 @@ function isSafeRelativeAssetRef(ref) {
     const trimmed = ref.trim();
     if (!trimmed || trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.startsWith('#'))
         return false;
-    const lower = trimmed.toLowerCase();
-    if (lower.startsWith('http:') || lower.startsWith('https:') || lower.startsWith('data:') || lower.startsWith('javascript:') || lower.startsWith('blob:')) {
+    // Reject any URI scheme (http:, https:, data:, javascript:, vbscript:, blob:, file:, etc.)
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
         return false;
     }
     return true;

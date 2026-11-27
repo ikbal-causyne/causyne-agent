@@ -94,7 +94,11 @@ test('installGameStudio enforces consent, validates SHA-256, and atomically inst
     fs.writeFileSync(path.join(srcDir, 'build', 'index.html'), '<title>Causyne Game</title>');
 
     const archivePath = path.join(tmp, 'causyne-game-0.2.0.tar.gz');
-    execFileSync('tar', ['-czf', archivePath, '-C', path.join(tmp, 'bundle-src'), 'causyne-game']);
+    const winTar = process.platform === 'win32'
+      ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+      : '';
+    const tarBin = winTar && fs.existsSync(winTar) ? winTar : 'tar';
+    execFileSync(tarBin, ['-czf', path.basename(archivePath), '-C', 'bundle-src', 'causyne-game'], { cwd: tmp });
     const archiveBytes = fs.readFileSync(archivePath);
     const sha256 = crypto.createHash('sha256').update(archiveBytes).digest('hex');
 

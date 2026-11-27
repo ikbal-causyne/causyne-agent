@@ -87,7 +87,7 @@ describe('Causyne Harness Absorption Capabilities', () => {
 
       assert.equal(ptyTerminalManager.closeSession(session.id), true);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 15, retryDelay: 50 });
     }
   });
 
@@ -213,7 +213,7 @@ describe('Causyne Harness Absorption Capabilities', () => {
       );
       assert.equal(blocked.success, false);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 15, retryDelay: 50 });
     }
   });
 

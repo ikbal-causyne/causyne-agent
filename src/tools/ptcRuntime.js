@@ -184,6 +184,8 @@ async function executeScript(rawCode, toolNames) {
       inspect(returned);
     }
     sendRpc({ type: 'done', ok: true, output: inspected.join('\\n') });
+    rpcOut.end(() => process.exit(0));
+    setTimeout(() => process.exit(0), 50).unref?.();
   } catch (err) {
     sendRpc({
       type: 'done',
@@ -191,6 +193,8 @@ async function executeScript(rawCode, toolNames) {
       error: err && err.message ? String(err.message) : String(err),
       output: inspected.join('\\n')
     });
+    rpcOut.end(() => process.exit(0));
+    setTimeout(() => process.exit(0), 50).unref?.();
   }
 }
 
@@ -253,18 +257,35 @@ export async function executeProgrammaticScript(code, context = {}, options = {}
                 hostToWorker.end();
             }
             catch { /* ignore */ }
+            if (proc.exitCode !== null || proc.killed) {
+                resolve(result);
+                return;
+            }
+            let resolved = false;
+            const done = () => {
+                if (resolved)
+                    return;
+                resolved = true;
+                clearTimeout(killTimer);
+                clearTimeout(waitTimer);
+                resolve(result);
+            };
+            proc.once('close', done);
+            proc.once('exit', done);
             try {
                 proc.kill('SIGTERM');
             }
             catch { /* ignore */ }
-            setTimeout(() => {
+            const killTimer = setTimeout(() => {
                 try {
                     if (proc.exitCode === null)
                         proc.kill('SIGKILL');
                 }
                 catch { /* ignore */ }
-            }, 400).unref?.();
-            resolve(result);
+            }, 250);
+            killTimer.unref?.();
+            const waitTimer = setTimeout(done, 800);
+            waitTimer.unref?.();
         };
         const onAbort = () => {
             finish({ success: false, error: 'Programmatic script execution aborted.', subCallsExecuted });

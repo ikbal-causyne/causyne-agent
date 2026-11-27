@@ -621,9 +621,18 @@ export async function startCausyneCoreBridge() {
             const status = typeof err?.status === 'number'
                 ? err.status
                 : 500;
+            const safeError = status === 413
+                ? 'Request body too large'
+                : status === 400
+                    ? 'Invalid JSON request body'
+                    : status === 403
+                        ? 'Forbidden'
+                        : status === 404
+                            ? 'Not found'
+                            : 'Internal bridge error';
             sendJson(res, status, {
                 ok: false,
-                error: err instanceof Error ? err.message : String(err)
+                error: safeError
             });
         });
     });

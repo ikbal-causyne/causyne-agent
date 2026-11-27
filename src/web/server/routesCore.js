@@ -148,9 +148,13 @@ export async function handleCoreRoutes(req, res, parsedUrl, ctx) {
             });
         }
         catch (err) {
+            auditLog.log({
+                event: 'skybridge_game_launch_error',
+                detail: err instanceof Error ? err.message.slice(0, 300) : 'launch_failed'
+            });
             sendJson(res, 400, {
                 ok: false,
-                error: err instanceof Error ? err.message : String(err)
+                error: 'Unable to launch Causyne Game.'
             });
         }
         return true;
@@ -171,9 +175,25 @@ export async function handleCoreRoutes(req, res, parsedUrl, ctx) {
             confirm,
             ...(manifestUrl ? { manifestUrl } : {})
         });
+        if (!result.success && !result.requiresConsent && result.error) {
+            auditLog.log({
+                event: 'skybridge_game_install_error',
+                detail: String(result.error).slice(0, 300)
+            });
+        }
         sendJson(res, result.success ? 200 : (result.requiresConsent ? 202 : 400), {
             ok: result.success,
-            ...result
+            manifestUrl: result.manifestUrl,
+            ...(result.requiresConsent !== undefined ? { requiresConsent: result.requiresConsent } : {}),
+            ...(result.installed !== undefined ? { installed: result.installed } : {}),
+            ...(result.alreadyInstalled !== undefined ? { alreadyInstalled: result.alreadyInstalled } : {}),
+            ...(result.version ? { version: result.version } : {}),
+            ...(result.license ? { license: result.license } : {}),
+            ...(result.size !== undefined ? { size: result.size } : {}),
+            ...(result.path ? { path: result.path } : {}),
+            ...(!result.success && !result.requiresConsent
+                ? { error: 'Causyne Game installation failed. Check local logs and retry.' }
+                : {})
         });
         return true;
     }
@@ -342,8 +362,9 @@ export async function handleCoreRoutes(req, res, parsedUrl, ctx) {
             });
         }
         catch (err) {
-            const msg = err instanceof EntitlementAccessError
-                ? err.message
+            const code = err instanceof EntitlementAccessError ? err.code : '';
+            const msg = code === 'DAILY_LIMIT_REACHED'
+                ? DAILY_LIMIT_SUPPORT_MESSAGE
                 : 'Unable to reach licensing service right now.';
             sendJson(res, 503, { ok: false, error: msg, enforcementEnabled: LICENSE_ENFORCEMENT_ENABLED });
         }
@@ -363,10 +384,14 @@ export async function handleCoreRoutes(req, res, parsedUrl, ctx) {
             sendJson(res, 200, { ok: true, plan, url: result.url });
         }
         catch (err) {
-            const msg = err instanceof EntitlementAccessError
-                ? err.message
-                : 'Unable to start Paddle checkout right now. Visit https://causyne.com/pricing.html.';
-            sendJson(res, 502, { ok: false, error: msg });
+            auditLog.log({
+                event: 'skybridge_license_checkout_error',
+                detail: err instanceof Error ? err.message.slice(0, 200) : 'checkout_failed'
+            });
+            sendJson(res, 502, {
+                ok: false,
+                error: 'Unable to start Paddle checkout right now. Visit https://causyne.com/pricing.html.'
+            });
         }
         return true;
     }
@@ -385,8 +410,11 @@ export async function handleCoreRoutes(req, res, parsedUrl, ctx) {
             });
         }
         catch (err) {
-            const status = err instanceof EntitlementAccessError && err.code === 'INVALID_RECOVERY_CODE' ? 400 : 404;
-            const msg = err instanceof EntitlementAccessError ? err.message : 'Could not link recovery code.';
+            const isInvalidCode = err instanceof EntitlementAccessError && err.code === 'INVALID_RECOVERY_CODE';
+            const status = isInvalidCode ? 400 : 404;
+            const msg = isInvalidCode
+                ? 'Invalid recovery code format.'
+                : 'Could not link recovery code.';
             sendJson(res, status, { ok: false, error: msg });
         }
         return true;
@@ -398,8 +426,11 @@ export async function handleCoreRoutes(req, res, parsedUrl, ctx) {
             sendJson(res, 200, { ok: true, url: result.url });
         }
         catch (err) {
-            const msg = err instanceof EntitlementAccessError ? err.message : 'Billing portal unavailable.';
-            sendJson(res, 502, { ok: false, error: msg });
+            auditLog.log({
+                event: 'skybridge_license_portal_error',
+                detail: err instanceof Error ? err.message.slice(0, 200) : 'portal_failed'
+            });
+            sendJson(res, 502, { ok: false, error: 'Billing portal unavailable.' });
         }
         return true;
     }

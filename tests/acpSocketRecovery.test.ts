@@ -283,8 +283,15 @@ test("prompt deadline cancels the active peer operation", async () => {
     const session = await client.newSession(f.directory);
     await assert.rejects(client.prompt(session, 'test'), /timed out/);
     const cancelFile = path.join(f.directory, 'cancels.txt');
-    for (let i = 0; i < 50 && !fs.existsSync(cancelFile); i++) await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal(fs.readFileSync(cancelFile, 'utf8'), 'cancel\n');
+    let cancelText = '';
+    for (let i = 0; i < 60; i++) {
+      if (fs.existsSync(cancelFile)) {
+        cancelText = fs.readFileSync(cancelFile, 'utf8');
+        if (cancelText.includes('cancel\n')) break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(cancelText, 'cancel\n');
   } finally {
     await client.close();
     f.cleanup();
@@ -438,8 +445,15 @@ test("inactivity timeout sends cancellation and quarantines the peer", async () 
     const session = await client.newSession(f.directory);
     await assert.rejects(client.prompt(session, 'test'), /stalled/);
     const cancelFile = path.join(f.directory, 'cancels.txt');
-    for (let i = 0; i < 50 && !fs.existsSync(cancelFile); i++) await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal(fs.readFileSync(cancelFile, 'utf8'), 'cancel\n');
+    let cancelText = '';
+    for (let i = 0; i < 60; i++) {
+      if (fs.existsSync(cancelFile)) {
+        cancelText = fs.readFileSync(cancelFile, 'utf8');
+        if (cancelText.includes('cancel\n')) break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(cancelText, 'cancel\n');
     await assert.rejects(client.prompt(session, 'another prompt'), /stalled; peer must reconnect/);
     assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
   } finally {
