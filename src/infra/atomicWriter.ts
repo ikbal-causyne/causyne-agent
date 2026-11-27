@@ -156,5 +156,32 @@ export async function atomicWriteFile(
   content: string | Buffer,
   options: AtomicWriteOptions = {}
 ): Promise<void> {
-  atomicWriteFileSync(targetPath, content, options);
+  const resolved = path.resolve(targetPath);
+  const dir = path.dirname(resolved);
+  const mode = options.mode ?? 0o644;
+  const dirMode = options.mode !== undefined
+    ? (options.mode | ((options.mode & 0o444) >> 2))
+    : 0o755;
+  const payload = typeof content === 'string'
+    ? Buffer.from(content, options.encoding ?? 'utf8')
+    : content;
+  await fsPromises.mkdir(dir, { recursive: true, mode: dirMode });
+  const randomSuffix = `${process.pid}.${crypto.randomBytes(6).toString('hex')}`;
+  const tempPath = path.join(dir, `.${path.basename(resolved)}.${randomSuffix}.tmp`);
+  let ownsTemp = false;
+  try {
+    const handle = await fsPromises.open(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, mode);
+    ownsTemp = true;
+    try {
+      await handle.writeFile(payload);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await atomicRename(tempPath, resolved);
+    ownsTemp = false;
+  } catch (error) {
+    if (ownsTemp) await fsPromises.unlink(tempPath).catch(() => {});
+    throw error;
+  }
 }
