@@ -20,7 +20,8 @@ const MAX_REDUCTION_ITERATIONS = 16;
 function formatShortTime(epochMs) {
     try {
         const d = new Date(epochMs);
-        if (!Number.isFinite(d.getTime())) return 'recent';
+        if (!Number.isFinite(d.getTime()))
+            return 'recent';
         const yyyy = d.getUTCFullYear();
         const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
         const dd = String(d.getUTCDate()).padStart(2, '0');

@@ -78,13 +78,15 @@ async function resolvedAddresses(hostname) {
     const addresses = [...new Set(results.map(result => result.address))];
     const now = Date.now();
     for (const [key, value] of hostCache) {
-      if (value.expiresAt <= now) hostCache.delete(key);
+        if (value.expiresAt <= now)
+            hostCache.delete(key);
     }
     hostCache.delete(hostname);
     while (hostCache.size >= MAX_DNS_CACHE_ENTRIES) {
-      const oldest = hostCache.keys().next();
-      if (oldest.done) break;
-      hostCache.delete(oldest.value);
+        const oldest = hostCache.keys().next();
+        if (oldest.done)
+            break;
+        hostCache.delete(oldest.value);
     }
     hostCache.set(hostname, { expiresAt: now + DNS_CACHE_MS, addresses });
     return addresses;

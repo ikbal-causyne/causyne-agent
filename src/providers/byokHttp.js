@@ -222,9 +222,10 @@ export function redactTextSecrets(rawText, secrets = [], options = {}) {
                 text = text.split(trimmed).join('[REDACTED]');
                 let encoded = trimmed;
                 try {
-                  encoded = encodeURIComponent(trimmed);
-                } catch {
-                  // The raw secret was already redacted; malformed UTF-16 has no URI encoding.
+                    encoded = encodeURIComponent(trimmed);
+                }
+                catch {
+                    // The raw secret was already redacted; malformed UTF-16 has no URI encoding.
                 }
                 if (encoded !== trimmed && encoded.length >= 6) {
                     text = text.split(encoded).join('[REDACTED]');

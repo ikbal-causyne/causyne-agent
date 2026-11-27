@@ -212,13 +212,14 @@ async function consumeSseStream(response, providerLabel, maxBytes, onEvent, sign
             }
             let newlineIdx = buffer.search(/[\r\n]/);
             while (newlineIdx !== -1) {
-              // Retain a trailing CR until the next chunk to distinguish CRLF.
-              if (buffer[newlineIdx] === '\r' && newlineIdx === buffer.length - 1) break;
-              const delimiterLength = buffer.slice(newlineIdx, newlineIdx + 2) === '\r\n' ? 2 : 1;
-              const line = buffer.slice(0, newlineIdx);
-              buffer = buffer.slice(newlineIdx + delimiterLength);
-              processLine(line);
-              newlineIdx = buffer.search(/[\r\n]/);
+                // Retain a trailing CR until the next chunk to distinguish CRLF.
+                if (buffer[newlineIdx] === '\r' && newlineIdx === buffer.length - 1)
+                    break;
+                const delimiterLength = buffer.slice(newlineIdx, newlineIdx + 2) === '\r\n' ? 2 : 1;
+                const line = buffer.slice(0, newlineIdx);
+                buffer = buffer.slice(newlineIdx + delimiterLength);
+                processLine(line);
+                newlineIdx = buffer.search(/[\r\n]/);
             }
         }
         buffer += decoder.decode();
@@ -228,10 +229,12 @@ async function consumeSseStream(response, providerLabel, maxBytes, onEvent, sign
             }
         }
         flushEvent();
-    } catch (error) {
-        await reader.cancel().catch(() => {});
+    }
+    catch (error) {
+        await reader.cancel().catch(() => { });
         throw error;
-    } finally {
+    }
+    finally {
         reader.releaseLock();
     }
 }
@@ -250,11 +253,13 @@ async function consumeNdjsonStream(response, providerLabel, maxBytes, onObject, 
             return;
         let parsed;
         try {
-          parsed = JSON.parse(trimmed);
-        } catch {
-          return;
+            parsed = JSON.parse(trimmed);
         }
-        if (isRecord(parsed)) onObject(parsed);
+        catch {
+            return;
+        }
+        if (isRecord(parsed))
+            onObject(parsed);
     };
     try {
         while (true) {
@@ -290,10 +295,12 @@ async function consumeNdjsonStream(response, providerLabel, maxBytes, onObject, 
         if (buffer.trim()) {
             processLine(buffer);
         }
-    } catch (error) {
-        await reader.cancel().catch(() => {});
+    }
+    catch (error) {
+        await reader.cancel().catch(() => { });
         throw error;
-    } finally {
+    }
+    finally {
         reader.releaseLock();
     }
 }

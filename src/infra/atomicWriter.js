@@ -103,9 +103,10 @@ export function atomicWriteFileSync(targetPath, content, options = {}) {
         try {
             let offset = 0;
             while (offset < payload.length) {
-              const written = fs.writeSync(fd, payload, offset, payload.length - offset);
-              if (written <= 0) throw new Error('Atomic file write made no progress');
-              offset += written;
+                const written = fs.writeSync(fd, payload, offset, payload.length - offset);
+                if (written <= 0)
+                    throw new Error('Atomic file write made no progress');
+                offset += written;
             }
             fs.fsyncSync(fd);
         }
@@ -130,28 +131,31 @@ export async function atomicWriteFile(targetPath, content, options = {}) {
     const dir = path.dirname(resolved);
     const mode = options.mode ?? 0o644;
     const dirMode = options.mode !== undefined
-      ? (options.mode | ((options.mode & 0o444) >> 2))
-      : 0o755;
+        ? (options.mode | ((options.mode & 0o444) >> 2))
+        : 0o755;
     const payload = typeof content === 'string'
-      ? Buffer.from(content, options.encoding ?? 'utf8')
-      : content;
+        ? Buffer.from(content, options.encoding ?? 'utf8')
+        : content;
     await fsPromises.mkdir(dir, { recursive: true, mode: dirMode });
     const randomSuffix = `${process.pid}.${crypto.randomBytes(6).toString('hex')}`;
     const tempPath = path.join(dir, `.${path.basename(resolved)}.${randomSuffix}.tmp`);
     let ownsTemp = false;
     try {
-      const handle = await fsPromises.open(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, mode);
-      ownsTemp = true;
-      try {
-        await handle.writeFile(payload);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await atomicRename(tempPath, resolved);
-      ownsTemp = false;
-    } catch (error) {
-      if (ownsTemp) await fsPromises.unlink(tempPath).catch(() => {});
-      throw error;
+        const handle = await fsPromises.open(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, mode);
+        ownsTemp = true;
+        try {
+            await handle.writeFile(payload);
+            await handle.sync();
+        }
+        finally {
+            await handle.close();
+        }
+        await atomicRename(tempPath, resolved);
+        ownsTemp = false;
+    }
+    catch (error) {
+        if (ownsTemp)
+            await fsPromises.unlink(tempPath).catch(() => { });
+        throw error;
     }
 }
