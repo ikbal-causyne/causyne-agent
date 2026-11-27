@@ -201,5 +201,5 @@ const RETRY_HINTS: Record<string, string> = {
 };
 
 export function getRetryHintForError(errorType: string): string {
-  return RETRY_HINTS[errorType] ?? RETRY_HINTS.unknown_error!;
+  return Object.hasOwn(RETRY_HINTS, errorType) ? (RETRY_HINTS[errorType] ?? RETRY_HINTS.unknown_error!) : RETRY_HINTS.unknown_error!;
 }

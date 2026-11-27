@@ -150,5 +150,5 @@ const RETRY_HINTS = {
     unknown_error: 'An unexpected error occurred. Try a different approach entirely.'
 };
 export function getRetryHintForError(errorType) {
-    return RETRY_HINTS[errorType] ?? RETRY_HINTS.unknown_error;
+    return Object.hasOwn(RETRY_HINTS, errorType) ? (RETRY_HINTS[errorType] ?? RETRY_HINTS.unknown_error) : RETRY_HINTS.unknown_error;
 }
