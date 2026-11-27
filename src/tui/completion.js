@@ -147,6 +147,7 @@ function commandItems(query = '') {
         'plugins',
         'cortex',
         'gui',
+        'game',
         'compact',
         'undo',
         'diff',

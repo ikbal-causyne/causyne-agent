@@ -25,8 +25,7 @@ import { formatMarkdownMath } from './markdownMath.js';
 import { renderThinkingFrame } from './thinkingBox.js';
 import { measureMessages, resolveCharPool } from '../contextManager.js';
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
-// minified output would otherwise become thousands of rows and lock the
-// terminal. (The failure openclaw's tool-execution component documents.)
+// minified output would otherwise become thousands of rows and lock the terminal.
 const PREVIEW_LINES = 12;
 // Cut the SOURCE before sanitising it, not after.
 const PREVIEW_SOURCE_BUDGET = PREVIEW_LINES * 256;

@@ -16,6 +16,12 @@ import {
   isExtremeRemovalSegment,
   isFetchAndExecPipeline
 } from './sandboxPolicy.js';
+import {
+  autonomyModeToPreset,
+  normalizePermissionPreset,
+  readOnlyPresetViolation,
+  type PermissionPresetId
+} from './permissionPresets.js';
 
 export type RiskLevel = 'safe' | 'moderate' | 'dangerous' | 'extreme' | 'forbidden';
 
@@ -158,7 +164,15 @@ export class Sandbox {
       (devMode ? [] : (this.config.deniedTools || []))
         .map((name: unknown) => String(name).replace(/\./g, '_'))
     );
+    this.permissionPreset = normalizePermissionPreset(safeOptions.permissionPreset)
+      ?? (typeof safeOptions.autonomyMode === 'string' && safeOptions.autonomyMode.trim()
+        ? autonomyModeToPreset(safeOptions.autonomyMode)
+        : null)
+      ?? normalizePermissionPreset((this.config as { permissionPreset?: unknown }).permissionPreset)
+      ?? autonomyModeToPreset(this.config.autonomyMode);
   }
+
+  permissionPreset: PermissionPresetId;
 
   updateWorkspacePaths(newPaths: unknown): { success: boolean; paths?: string[]; reason?: string } {
     if (Array.isArray(newPaths) && newPaths.length > 0) {
@@ -202,6 +216,12 @@ export class Sandbox {
     }
 
     const safeArgs: Record<string, any> = args && typeof args === 'object' ? args : {};
+    if (this.permissionPreset === 'read-only') {
+      const readOnlyErr = readOnlyPresetViolation(canonicalToolName, safeArgs);
+      if (readOnlyErr) {
+        return { allowed: false, reason: readOnlyErr, risk: 'dangerous' };
+      }
+    }
     const pathsToCheck: unknown[] = [];
     if (canonicalToolName !== 'fs_read_skill') {
       const PATH_ARGUMENTS = [
@@ -283,6 +303,29 @@ export class Sandbox {
         return withCredentialEscalation({ allowed: true, risk: 'moderate' });
       }
       return withCredentialEscalation({ allowed: true, risk: 'safe' });
+    }
+
+    if (canonicalToolName === 'present' || canonicalToolName === 'session_search' || canonicalToolName === 'run_code') {
+      return withCredentialEscalation({ allowed: true, risk: 'safe' });
+    }
+
+    if (canonicalToolName === 'goal' || canonicalToolName === 'schedule') {
+      return withCredentialEscalation({ allowed: true, risk: 'moderate' });
+    }
+
+    if (canonicalToolName === 'terminal_pty') {
+      const action = String(safeArgs.action || '').trim();
+      if (action === 'list' || action === 'read' || action === 'resize') {
+        return withCredentialEscalation({ allowed: true, risk: 'safe' });
+      }
+      if (action === 'send' && typeof safeArgs.input === 'string' && safeArgs.input.trim()) {
+        const risk = this.classifyCommandRisk(safeArgs.input);
+        if (risk === 'forbidden') {
+          return { allowed: false, reason: 'Command is permanently blocked for safety', risk: 'forbidden' };
+        }
+        return withCredentialEscalation({ allowed: true, risk });
+      }
+      return withCredentialEscalation({ allowed: true, risk: 'moderate' });
     }
 
     if (canonicalToolName === 'sysRun' || canonicalToolName === 'sysRunBg' || canonicalToolName === 'terminal_persistent_shell') {

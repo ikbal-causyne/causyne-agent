@@ -1,5 +1,7 @@
 /** Shared setup transaction for the home panel and standalone CLI. */
 import { resolveAvailableModels } from '../dynamicCatalogue.js';
+import { getPermissionPresetDescriptor, normalizePermissionPreset, presetToAutonomyMode } from '../permissionPresets.js';
+import { reconcileConfigVariant } from '../modelVariants.js';
 import { safeDisplay } from './text.js';
 const string = (value) => typeof value === 'string' ? value : '';
 const customProviders = new Set(['openai-compatible', 'dashscope-byok', 'ollama']);
@@ -122,14 +124,17 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
                 return null;
             apiKey = answer || oldKey;
         }
-        const mode = await ui.select({ title: 'Setup 4/5 · autonomy', items: [
-                { id: 'B', label: 'B · Supervised (Standard)', description: 'Recommended. Approval for dangerous actions; routine work continues.' },
-                { id: 'A', label: 'A · Ask first (Strict)', description: 'Explicit confirmation before every tool call.' },
-                { id: 'C', label: 'C · Autonomous (High Velocity)', description: 'Fewer interruptions; mandatory safety and decision gates remain.' }
+        const selectedPerm = await ui.select({ title: 'Setup 4/5 · permissions', items: [
+                { id: 'workspace-write', label: 'Workspace Write (Recommended)', description: 'Read and edit files within the workspace; confirm risky or external actions.' },
+                { id: 'read-only', label: 'Read Only', description: 'Inspect files and search code without modifying workspace files.' },
+                { id: 'danger-full-access', label: 'Full access', description: 'Direct workspace edits and commands; destructive and credential safeguards remain.' }
             ] });
-        if (!mode || !['A', 'B', 'C'].includes(mode.id))
+        const chosenPreset = normalizePermissionPreset(selectedPerm?.id);
+        if (!chosenPreset)
             return null;
-        draft = { ...draft, provider: provider.id, model, apiKey, autonomyMode: mode.id };
+        const chosenDesc = getPermissionPresetDescriptor(chosenPreset);
+        const chosenAutonomy = presetToAutonomyMode(chosenPreset);
+        draft = { ...draft, provider: provider.id, model, apiKey, permissionPreset: chosenPreset, autonomyMode: chosenAutonomy };
         if (baseUrl)
             draft.baseUrl = baseUrl;
         else
@@ -138,7 +143,7 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
         const cleanLabel = safeDisplay(provider.label).replace(/\s+/g, ' ').trim();
         const cleanModel = safeDisplay(model).replace(/\s+/g, ' ').trim();
         const review = await ui.select({ title: 'Setup 5/5 · review', items: [
-                { id: 'save', label: 'Save configuration', description: `${cleanLabel} · ${cleanModel} · Mode ${mode.id}` },
+                { id: 'save', label: 'Save configuration', description: `${cleanLabel} · ${cleanModel} · ${chosenDesc.label}` },
                 { id: 'edit', label: 'Edit choices', description: baseUrl || 'Provider default endpoint' },
                 { id: 'cancel', label: 'Cancel without saving', description: `Workspace: ${cleanWorkspace}` }
             ] });
@@ -148,8 +153,16 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
             continue;
         if (review.id !== 'save')
             return null;
-        // Preserve unrelated settings changed while the dialog was open.
-        const next = { ...store.loadConfig(), provider: draft.provider, model, apiKey, autonomyMode: mode.id };
+        // Preserve unrelated settings changed while the dialog was open, while clearing
+        // stale reasoning variants when switching provider or model.
+        const existingCfg = store.loadConfig();
+        const providerOrModelChanged = existingCfg.provider !== draft.provider || existingCfg.model !== model;
+        const next = { ...existingCfg, provider: draft.provider, model, apiKey, permissionPreset: chosenPreset, autonomyMode: chosenAutonomy };
+        if (providerOrModelChanged) {
+            delete next.reasoningEffort;
+            delete next.reasoningBudgetTokens;
+        }
+        reconcileConfigVariant(next);
         const saved = next;
         if (baseUrl)
             saved.baseUrl = baseUrl;

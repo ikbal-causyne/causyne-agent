@@ -4,6 +4,7 @@ import { LLMProvider, type ChatOptions, type ChatResponse, type ProviderConfig }
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 import {
+  ProviderHttpError,
   requireApiKey,
   resolveTemperature,
   safeProviderFetchJson
@@ -45,8 +46,11 @@ export class MoonshotProvider extends LLMProvider {
         payload['thinking'] = { type: 'disabled' };
       } else {
         payload['thinking'] = { type: 'enabled' };
-        if (['low', 'medium', 'high'].includes(this.reasoningEffort)) {
-          payload['reasoning_effort'] = this.reasoningEffort;
+        const mappedEffort = this.reasoningEffort === 'minimal'
+          ? 'low'
+          : (['xhigh', 'max', 'ultra'].includes(this.reasoningEffort) ? 'high' : this.reasoningEffort);
+        if (['low', 'medium', 'high'].includes(mappedEffort)) {
+          payload['reasoning_effort'] = mappedEffort;
         }
       }
     }
@@ -96,17 +100,34 @@ export class MoonshotProvider extends LLMProvider {
       }
     };
 
-    const data = wantsStreaming(options)
-      ? await streamOpenAICompatibleChat({
-          ...requestOpts,
-          payload,
-          onChunk: options.onChunk,
-          onReasoningChunk: options.onReasoningChunk
-        })
-      : await safeProviderFetchJson({
-          ...requestOpts,
-          body: JSON.stringify(payload)
-        });
+    const runMoonshotRequest = async (reqPayload: Record<string, any>) => (
+      wantsStreaming(options)
+        ? await streamOpenAICompatibleChat({
+            ...requestOpts,
+            payload: reqPayload,
+            onChunk: options.onChunk,
+            onReasoningChunk: options.onReasoningChunk
+          })
+        : await safeProviderFetchJson({
+            ...requestOpts,
+            body: JSON.stringify(reqPayload)
+          })
+    );
+
+    let data: Record<string, any>;
+    try {
+      data = await runMoonshotRequest(payload);
+    } catch (err: unknown) {
+      const rejectedReasoning = ('thinking' in payload || 'reasoning_effort' in payload)
+        && err instanceof ProviderHttpError
+        && err.status === 400
+        && /(?:thinking|reasoning_effort|effort|unsupported|not supported|invalid|unknown)/i.test(err.message);
+      if (!rejectedReasoning) throw err;
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload['thinking'];
+      delete fallbackPayload['reasoning_effort'];
+      data = await runMoonshotRequest(fallbackPayload);
+    }
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_moonshot',
       freeFormPaths

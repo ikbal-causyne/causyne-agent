@@ -133,8 +133,15 @@ describe('CLI Public Release Readiness — /gui, Variant Pill, Shortcuts, Doctor
         scheduleDraw() {}
       };
       const modes: string[] = [];
+      const appliedVariants: string[] = [];
       const mockLoop = {
         config: { autonomyMode: 'A' as string },
+        llm: {
+          applyVariant(v: string) {
+            appliedVariants.push(v);
+            return Promise.resolve(true);
+          }
+        },
         setAutonomyMode(m: string) {
           this.config.autonomyMode = m;
           modes.push(m);
@@ -146,13 +153,19 @@ describe('CLI Public Release Readiness — /gui, Variant Pill, Shortcuts, Doctor
       cycleModeControl(mockPrompt, mockLoop);
       assert.deepEqual(modes, ['B', 'C', 'A']);
 
-      // First Ctrl+T moves from auto -> first supported variant ('none')
+      // First Ctrl+T moves from auto -> first supported variant ('none') silently (zero chat spam)
       cycleVariantControl(mockPrompt, mockLoop);
-      assert.equal(delivered[0], '/variant none');
+      assert.equal(delivered.length, 0, 'Ctrl+T must not spam the chat transcript');
+      assert.equal(loadConfig().reasoningEffort, 'none');
+      assert.equal(appliedVariants[0], 'none');
+      assert.match(mockPrompt.notice, /Variant: none/);
 
       saveConfig({ provider: 'openai', model: 'gpt-5.4', reasoningEffort: 'high' });
       cycleVariantControl(mockPrompt, mockLoop);
-      assert.equal(delivered[1], '/variant xhigh');
+      assert.equal(delivered.length, 0, 'Ctrl+T must not spam the chat transcript');
+      assert.equal(loadConfig().reasoningEffort, 'xhigh');
+      assert.equal(appliedVariants[1], 'xhigh');
+      assert.match(mockPrompt.notice, /Variant: xhigh/);
 
       // Shift+Tab key binding triggers onCycleMode on ChatPrompt
       let shiftTabFired = 0;
@@ -249,16 +262,21 @@ describe('CLI Public Release Readiness — /gui, Variant Pill, Shortcuts, Doctor
     }
   });
 
-  test('Web Studio GUI embeds the official 6-blade Causyne SVG, favicon, and looping aperture animations', async () => {
+  test('Web Studio GUI embeds the official 6-blade Causyne SVG, favicon, and modular looping aperture stylesheets', async () => {
     const html = renderSkybridgeHtml({ cspNonce: 'nonce123', workspaceName: 'Demo', version: '1.20.122' });
     assert.match(html, /viewBox="0 0 1254 1254"/);
     assert.match(html, /causyne-blade b1/);
     assert.match(html, /causyne-blade b6/);
-    assert.match(html, /causyne-aperture-orbit/);
-    assert.match(html, /causyne-blade-chase/);
-    assert.match(html, /turn-live-row/);
     assert.match(html, /hero-mark/);
     assert.match(html, /href="\/favicon\.svg"/);
+    assert.match(html, /href="\/assets\/styles\/shell\.css"/);
+    assert.match(html, /src="\/assets\/client\/main\.js"/);
+
+    const shellCss = fs.readFileSync(path.join(process.cwd(), 'src/web/styles/shell.css'), 'utf8');
+    const threadCss = fs.readFileSync(path.join(process.cwd(), 'src/web/styles/thread.css'), 'utf8');
+    assert.match(shellCss, /causyne-aperture-orbit/);
+    assert.match(shellCss, /causyne-blade-chase/);
+    assert.match(threadCss, /turn-live-row/);
 
     const fav = getCausyneFaviconSvg();
     assert.match(fav, /viewBox="0 0 1254 1254"/);

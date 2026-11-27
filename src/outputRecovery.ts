@@ -7,9 +7,11 @@ function normalizePathKey(filePath: string): string {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
-/** Read only an exact output file already attached to this session's history. */
+const RECOVERY_READ_TOOLS = new Set(['fs_read', 'code_search_ripgrep', 'fs_search']);
+
+/** Read or search only an exact output file already attached to this session's history. */
 export function isOutputRecoveryRead(tool: string, target: unknown, knownPaths: ReadonlySet<string>): boolean {
-  if (tool !== 'fs_read' || typeof target !== 'string') return false;
+  if (!RECOVERY_READ_TOOLS.has(tool) || typeof target !== 'string') return false;
   const targetKey = normalizePathKey(target);
   const isKnown = Array.from(knownPaths).some(known => normalizePathKey(known) === targetKey);
   if (!isKnown) return false;

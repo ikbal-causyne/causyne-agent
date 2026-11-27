@@ -21,6 +21,12 @@ import {
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
 import {
+  getDefaultPermissionPreset,
+  getPermissionPresetDescriptor,
+  normalizePermissionPreset,
+  setDefaultPermissionPreset
+} from './permissionPresets.js';
+import {
   resolveAvailableModels,
   getCuratedModels,
   getLiveAntigravityModels,
@@ -111,6 +117,16 @@ import {
   getGuiServerStatus,
   stopGuiServer
 } from './web/guiLauncher.js';
+import {
+  launchGameStudio,
+  getGameStudioStatus,
+  stopGameStudio
+} from './game/gameLauncher.js';
+import {
+  defaultGameManifestUrl,
+  installGameStudio,
+  locateGameStudio
+} from './game/gameProvisioner.js';
 
 export interface CommandCompletionItem {
   value: string;
@@ -313,12 +329,19 @@ async function applySelectedVariant(
     );
   }
 
-  config.reasoningEffort = matched.id;
   const modelChanged = Boolean(matched.targetModelId && matched.targetModelId !== config.model);
   if (matched.targetModelId) {
     config.model = matched.targetModelId;
   }
+  if (spec.source === 'agy_models') {
+    delete config.reasoningEffort;
+    delete config.reasoningBudgetTokens;
+  } else {
+    config.reasoningEffort = matched.id;
+  }
   saveConfig(config);
+
+  const displayedVariant = spec.source === 'agy_models' ? '' : matched.id;
 
   let liveSynced = false;
   if (typeof ctx.loop?.llm?.applyVariant === 'function' && !modelChanged) {
@@ -335,17 +358,17 @@ async function applySelectedVariant(
 
   if (ctx.prompt) {
     if (typeof ctx.prompt.updateModel === 'function') {
-      ctx.prompt.updateModel(config.provider || spec.provider, config.model || spec.model, matched.id);
+      ctx.prompt.updateModel(config.provider || spec.provider, config.model || spec.model, displayedVariant);
     } else if (ctx.prompt.renderer?.status) {
       ctx.prompt.renderer.status.setSession({
         provider: config.provider || spec.provider,
         model: config.model || spec.model,
-        variant: matched.id
+        variant: displayedVariant
       });
       ctx.prompt.surface?.setSessionInfo?.({
         provider: config.provider || spec.provider,
         model: config.model || spec.model,
-        variant: matched.id
+        variant: displayedVariant
       });
       if (typeof ctx.prompt.scheduleDraw === 'function') ctx.prompt.scheduleDraw();
     }
@@ -615,12 +638,10 @@ export const COMMANDS: SlashCommandDefinition[] = [
     /**
      * Argument suggestions, offered as the user types `/skills <prefix>`.
      *
-     * openclaw's contract (src/tui/commands.ts getArgumentCompletions): the
-     * command owns its argument vocabulary and the prompt asks for it. Ranking
-     * and filtering are the prompt's job — this returns the whole vocabulary and
-     * completion.js scores it with the same function it uses for commands and
-     * filenames, so `/skills doc` reaches devops/docker-multi-stage-builds by a
-     * basename-prefix match rather than needing the domain typed first.
+     * The command owns its argument vocabulary and the prompt ranks and filters
+     * candidates using the shared fuzzy scorer, so `/skills doc` reaches
+     * `devops/docker-multi-stage-builds` by a basename-prefix match rather than
+     * requiring the domain to be typed first.
      *
      * Domains are offered alongside skills because `/skills devops` is a valid
      * argument in its own right.
@@ -2317,6 +2338,149 @@ export const COMMANDS: SlashCommandDefinition[] = [
   },
 
   {
+    name: 'game',
+    aliases: ['gamestudio', 'causyne-game'],
+    scope: 'local',
+    usage: '/game [open | status | stop | install [--yes] | --port <n> | --no-open]',
+    description: 'Launch, inspect, stop, or install Causyne Game (official separate AI Game Studio)',
+    complete: () => [
+      { value: 'open', label: 'open', description: 'launch and open Causyne Game Studio in your browser' },
+      { value: 'status', label: 'status', description: 'show Causyne Game installation and running server status' },
+      { value: 'stop', label: 'stop', description: 'shut down the local Causyne Game server' },
+      { value: 'install', label: 'install', description: 'check or download Causyne Game from the release manifest' },
+      { value: '--no-open', label: '--no-open', description: 'start Causyne Game without automatically opening a browser tab' }
+    ],
+    run: async (argv, ctx = {}) => {
+      const tokens = argv.map((t) => String(t || '').trim()).filter(Boolean);
+      const first = (tokens[0] || 'open').toLowerCase();
+
+      if (first === 'status') {
+        const located = locateGameStudio();
+        const status = getGameStudioStatus();
+        const lines = ['Causyne Game Studio'];
+        if (located) {
+          lines.push(`  Installed : yes (${located.source}${located.version ? ` · v${located.version}` : ''})`);
+          lines.push(`  Location  : ${safeDisplay(located.dir)}`);
+          lines.push(`  Build     : ${located.hasNodeModules && located.hasStudioBuild ? 'ready' : 'incomplete (run npm ci && npm run build:studio)'}`);
+        } else {
+          lines.push('  Installed : no (run /game install --yes or set CAUSYNE_GAME_DIR)');
+        }
+        lines.push(`  Manifest  : ${defaultGameManifestUrl()}`);
+        if (status.running) {
+          lines.push(`  Server    : running at ${status.url} (127.0.0.1 loopback only)`);
+          lines.push('  Control   : /game stop (also stops automatically on CLI exit)');
+        } else {
+          lines.push('  Server    : not running (run /game to launch)');
+        }
+        return ok(lines.join('\n'), { effect: 'inline' });
+      }
+
+      if (first === 'stop' || first === 'close' || first === 'off') {
+        const stopped = await stopGameStudio();
+        if (ctx.prompt) {
+          ctx.prompt.notice = stopped ? 'Causyne Game stopped' : 'Causyne Game was not running';
+          ctx.prompt.scheduleDraw?.();
+        }
+        return ok(
+          stopped ? 'Stopped local Causyne Game Studio server.' : 'Causyne Game Studio is not currently running.',
+          { effect: 'inline' }
+        );
+      }
+
+      if (first === 'install') {
+        const confirm = tokens.some((tok) => tok === '--yes' || tok === '-y' || tok === '--confirm');
+        let manifestUrl: string | undefined;
+        for (let i = 1; i < tokens.length; i++) {
+          const tok = tokens[i]!;
+          if (tok === '--manifest' && i + 1 < tokens.length) {
+            manifestUrl = tokens[++i];
+          } else if (tok.startsWith('--manifest=')) {
+            manifestUrl = tok.slice('--manifest='.length);
+          }
+        }
+        const res = await installGameStudio({ confirm, manifestUrl });
+        if (res.requiresConsent) {
+          const lines = [
+            `Causyne Game v${res.version ?? 'latest'} is ready to install from ${safeDisplay(res.manifestUrl)}.`
+          ];
+          if (res.license) lines.push(`  License : ${safeDisplay(res.license)}`);
+          if (res.size) lines.push(`  Size    : ${(res.size / (1024 * 1024)).toFixed(1)} MB (SHA-256 verified)`);
+          lines.push('  Confirm : run /game install --yes to download and install into ~/.causyne/game/');
+          return ok(lines.join('\n'), { effect: 'inline' });
+        }
+        if (!res.success) {
+          return fail(`Causyne Game install failed: ${safeDisplay(res.error || 'unknown error')}`);
+        }
+        return ok(
+          res.alreadyInstalled
+            ? `Causyne Game v${res.version ?? ''} is already installed at ${safeDisplay(res.path || '')}. Run /game to launch.`
+            : `Installed Causyne Game v${res.version ?? ''} to ${safeDisplay(res.path || '')}. Run /game to launch.`,
+          { effect: 'inline' }
+        );
+      }
+
+      let port = 0;
+      let noOpen = false;
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i]!;
+        const lower = tok.toLowerCase();
+        if (lower === 'open' || lower === 'start') continue;
+        if (lower === '--no-open' || lower === '--no-browser') {
+          noOpen = true;
+          continue;
+        }
+        if (lower === '--port' && i + 1 < tokens.length) {
+          const parsed = Number.parseInt(tokens[++i]!, 10);
+          if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+            return fail(`Invalid port "${safeDisplay(tokens[i]!)}". Expected 0-65535.`);
+          }
+          port = parsed;
+          continue;
+        }
+        if (lower.startsWith('--port=')) {
+          const rawPort = tok.slice('--port='.length);
+          const parsed = Number.parseInt(rawPort, 10);
+          if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+            return fail(`Invalid port "${safeDisplay(rawPort)}". Expected 0-65535.`);
+          }
+          port = parsed;
+          continue;
+        }
+        return fail(`Unknown /game option "${safeDisplay(tok)}". Usage: /game [open | status | stop | install [--yes] | --port <n> | --no-open]`);
+      }
+
+      let launched;
+      try {
+        launched = await launchGameStudio({
+          port,
+          openBrowser: !noOpen
+        });
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : String(error));
+      }
+
+      if (ctx.prompt) {
+        ctx.prompt.notice = `Causyne Game live at ${launched.origin}`;
+        ctx.prompt.scheduleDraw?.();
+      }
+
+      const outLines = [
+        launched.reused
+          ? 'Causyne Game Studio is already running (127.0.0.1 loopback only):'
+          : 'Causyne Game Studio started (127.0.0.1 loopback only · primary agent: Causyne Agent):',
+        `  Open URL  : ${launched.url}${launched.copiedToClipboard ? '  (copied to clipboard)' : ''}`,
+        `  Source    : ${launched.source}${launched.version ? ` (v${launched.version})` : ''} · ${safeDisplay(launched.dir)}`,
+        `  Browser   : ${launched.openedBrowser ? 'Opened in your default browser' : 'Open the URL above in your browser'}`
+      ];
+      if (launched.browserHint) {
+        outLines.push(`  Remote    : ${safeDisplay(launched.browserHint)}`);
+      }
+      outLines.push('  Control   : /game status | /game stop (auto-stops when CLI exits)');
+      return ok(outLines.join('\n'), { effect: 'inline' });
+    }
+  },
+
+  {
     name: 'openrouter',
     aliases: ['free'],
     scope: 'local',
@@ -3146,47 +3310,60 @@ export const COMMANDS: SlashCommandDefinition[] = [
 
   {
     name: 'mode',
-    aliases: ['autonomy'],
+    aliases: ['autonomy', 'permissions', 'permission'],
     scope: 'local',
-    usage: '/mode [A | B | C]',
-    description: 'View or switch autonomy mode (A: Ask, B: Balanced, C: Autonomous)',
-    dialogTitle: 'Autonomy Mode',
+    usage: '/mode [read-only | workspace-write | full-access]',
+    description: 'View or switch permission preset (Read Only, Workspace Write, Full access)',
+    dialogTitle: 'Permission Preset',
     complete: () => [
-      { value: 'A', label: 'A', description: 'Ask — review actions before execution' },
-      { value: 'B', label: 'B', description: 'Balanced — normal supervised autonomy' },
-      { value: 'C', label: 'C', description: 'Autonomous — maximum runway within policy' }
+      { value: 'read-only', label: 'Read Only', description: 'Inspect files and search without modifying workspace files' },
+      { value: 'workspace-write', label: 'Workspace Write', description: 'Edit files inside workspace with approval for risky actions' },
+      { value: 'full-access', label: 'Full access', description: 'Direct workspace edits and commands within safety guardrails' }
     ],
     run: async (argv, ctx = {}) => {
       const config = loadConfig();
-      const target = (argv[0] || '').toUpperCase().trim();
-      if (!target) {
+      const rawTarget = (argv[0] || '').trim();
+      if (!rawTarget) {
         if (ctx.prompt) {
           const { openModeControl } = await import('./tui/composerControls.js');
           if (ctx.loop) {
             openModeControl(ctx.prompt, ctx.loop);
-            return ok('Opened mode selector.', { effect: 'silent' });
+            return ok('Opened permission preset selector.', { effect: 'silent' });
           }
         }
-        return ok(`Current autonomy mode: ${config.autonomyMode || 'B'}\nModes:\n  A: Ask (confirm gated actions)\n  B: Balanced (supervised execution)\n  C: Autonomous (independent execution)`);
+        const curPreset = getDefaultPermissionPreset();
+        const curDesc = getPermissionPresetDescriptor(curPreset);
+        return ok(
+          `Current permission preset: ${curDesc.label} (${curPreset})\n`
+          + `Presets:\n`
+          + `  read-only        Read Only — inspect and search without workspace writes\n`
+          + `  workspace-write  Workspace Write — edits scoped to workspace with approval gates\n`
+          + `  full-access      Full access — direct execution within safety guardrails`
+        );
       }
 
-      if (!['A', 'B', 'C'].includes(target)) {
-        return fail(`Invalid mode "${target}". Choose A, B, or C.`);
+      const preset = normalizePermissionPreset(rawTarget);
+      if (!preset) {
+        return fail(`Invalid permission preset "${rawTarget}". Choose read-only, workspace-write, or full-access.`);
       }
 
-      config.autonomyMode = target;
-      saveConfig(config);
-      if (ctx.loop && typeof ctx.loop.setAutonomyMode === 'function') {
-        ctx.loop.setAutonomyMode(target);
+      const desc = getPermissionPresetDescriptor(preset);
+      setDefaultPermissionPreset(preset);
+      config.permissionPreset = preset;
+      config.autonomyMode = desc.autonomyMode;
+      if (ctx.loop && typeof ctx.loop.setPermissionPreset === 'function') {
+        ctx.loop.setPermissionPreset(preset);
+      } else if (ctx.loop && typeof ctx.loop.setAutonomyMode === 'function') {
+        ctx.loop.setAutonomyMode(desc.autonomyMode);
       }
       if (ctx.prompt) {
-        ctx.prompt.renderer?.status?.setSession?.({ autonomyMode: target });
-        ctx.prompt.surface?.setSessionInfo?.({ autonomyMode: target });
-        ctx.prompt.notice = `Mode ${target} active`;
+        ctx.prompt.renderer?.status?.setSession?.({ permissionPreset: preset, autonomyMode: desc.autonomyMode });
+        ctx.prompt.surface?.setSessionInfo?.({ permissionPreset: preset, autonomyMode: desc.autonomyMode });
+        ctx.prompt.notice = `${desc.label} active`;
         if (ctx.prompt.scheduleDraw) ctx.prompt.scheduleDraw();
-        return ok(`Autonomy mode switched to ${target}.`, { effect: 'inline' });
+        return ok(`Permission preset switched to ${desc.label} (${preset}).`, { effect: 'inline' });
       }
-      return ok(`Autonomy mode switched to ${target}.`);
+      return ok(`Permission preset switched to ${desc.label} (${preset}).`);
     }
   },
 

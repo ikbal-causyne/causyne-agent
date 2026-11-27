@@ -598,3 +598,48 @@ export function resolveModelVariants(input) {
             : family.note
     };
 }
+/**
+ * Reconcile a saved `reasoningEffort` against the currently selected `(provider, model)`
+ * so stale variants from a previous provider/model (e.g. OpenCode `max` after switching
+ * to Antigravity `Gemini 4 Neon (XHigh)`) are cleared cleanly instead of leaking into
+ * CLI flags or status indicators.
+ */
+export function reconcileConfigVariant(config, options = {}) {
+    if (!config || typeof config !== 'object')
+        return '';
+    const raw = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim() : '';
+    if (!raw) {
+        delete config.reasoningEffort;
+        return '';
+    }
+    const provider = typeof config.provider === 'string' ? config.provider.trim() : '';
+    const model = typeof config.model === 'string' ? config.model.trim() : '';
+    // Antigravity encodes effort inside each model slug (e.g. `Gemini 4 Neon (XHigh)`),
+    // and unsuffixed orchestrator models reject `--effort`. Never retain a separate
+    // `reasoningEffort` override across Antigravity models.
+    if (isAntigravityProvider(provider)) {
+        delete config.reasoningEffort;
+        delete config.reasoningBudgetTokens;
+        return '';
+    }
+    const spec = resolveModelVariants({
+        provider,
+        model,
+        currentVariant: raw,
+        peerModelVariants: options.peerModelVariants,
+        availableAgyModels: options.liveAgyModels
+    });
+    if (spec.source === 'agy_models' || !spec.supported) {
+        delete config.reasoningEffort;
+        delete config.reasoningBudgetTokens;
+        return '';
+    }
+    const matched = matchVariantOption(spec, raw);
+    if (!matched) {
+        delete config.reasoningEffort;
+        delete config.reasoningBudgetTokens;
+        return '';
+    }
+    config.reasoningEffort = matched.id;
+    return matched.id;
+}

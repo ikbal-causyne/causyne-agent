@@ -12,6 +12,7 @@ import { terminalWidth, readableWidth } from './tui/theme.js';
 import { isAcpProvider } from './providers/acp.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
 import { LICENSE_ENFORCEMENT_ENABLED } from './licensing/policy.js';
+import { getPermissionPresetDescriptor, resolveConfigPermissionPreset } from './permissionPresets.js';
 function resolveDisplayTier(liveConfig, savedConfig) {
     const configured = liveConfig?.tier ?? savedConfig?.tier;
     if (typeof configured === 'string' && configured.trim())
@@ -358,7 +359,8 @@ export function buildStatusText(options) {
     const liveConfig = loop?.config || {};
     const provider = String(liveConfig.provider || config.provider || 'default');
     const model = String(liveConfig.model || config.model || 'default');
-    const autonomyMode = String(liveConfig.autonomyMode || config.autonomyMode || 'C');
+    const presetId = resolveConfigPermissionPreset(liveConfig, resolveConfigPermissionPreset(config, 'workspace-write'));
+    const presetDesc = getPermissionPresetDescriptor(presetId);
     const tier = resolveDisplayTier(liveConfig, config);
     const lines = ['Status'];
     lines.push('  Runtime          : local desktop');
@@ -366,7 +368,7 @@ export function buildStatusText(options) {
         lines.push(`  Session          : ${safeDisplay(loop.memoryManager.sessionId)}`);
     }
     lines.push(`  Provider / model : ${safeDisplay(provider)} / ${safeDisplay(model)}`);
-    lines.push(`  Autonomy mode    : ${safeDisplay(autonomyMode)}`);
+    lines.push(`  Permission       : ${safeDisplay(presetDesc.label)} (${safeDisplay(presetDesc.id)})`);
     lines.push(`  Tier             : ${safeDisplay(tier)}`);
     if (loop && loop.sandbox) {
         const sandbox = loop.sandbox;

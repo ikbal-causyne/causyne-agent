@@ -205,6 +205,7 @@ export class LspSession {
   private diagnosticWaiters = new Map<string, Array<() => void>>();
   private initPromise: Promise<void> | null = null;
   private closed = false;
+  private stderrTail = '';
   lastUsedAt = Date.now();
   serverCapabilities: Record<string, unknown> = {};
 
@@ -238,7 +239,12 @@ export class LspSession {
       this.proc = proc;
 
       proc.stdin.on('error', () => { /* ignore broken pipe during shutdown */ });
-      proc.stderr.on('data', () => { /* drain stderr to prevent pipe backpressure */ });
+      proc.stderr.on('data', (chunk: Buffer) => {
+        const text = chunk.toString('utf8');
+        if (text) {
+          this.stderrTail = (this.stderrTail + text).slice(-16 * 1024);
+        }
+      });
 
       proc.stdout.on('data', (chunk: Buffer) => {
         try {
@@ -252,25 +258,30 @@ export class LspSession {
       });
 
       proc.on('error', (err: Error) => {
-        this.rejectAllPending(new Error(`LSP server "${this.serverId}" process error: ${err.message}`));
+        const tailNote = this.stderrTail.trim() ? ` | stderr: ${safeDisplay(this.stderrTail.trim()).slice(-400)}` : '';
+        this.rejectAllPending(new Error(`LSP server "${this.serverId}" process error: ${err.message}${tailNote}`));
         this.proc = null;
         this.initPromise = null;
       });
 
       proc.on('exit', (code: number | null) => {
-        this.rejectAllPending(new Error(`LSP server "${this.serverId}" exited (code ${String(code)}).`));
+        const tailNote = this.stderrTail.trim() ? ` | stderr: ${safeDisplay(this.stderrTail.trim()).slice(-400)}` : '';
+        this.rejectAllPending(new Error(`LSP server "${this.serverId}" exited (code ${String(code)})${tailNote}.`));
         this.proc = null;
         this.initPromise = null;
       });
 
       const rootUri = filePathToUri(this.workspaceRoot);
       const initResult = await this.sendRequest('initialize', {
-        processId: process.pid,
+        processId: null,
         clientInfo: { name: 'causyne-agent', version: '1.0' },
         rootUri,
         rootPath: this.workspaceRoot,
         workspaceFolders: [{ uri: rootUri, name: path.basename(this.workspaceRoot) }],
         capabilities: {
+          general: {
+            positionEncodings: ['utf-16']
+          },
           textDocument: {
             synchronization: { didSave: true },
             definition: { linkSupport: true },
@@ -292,6 +303,10 @@ export class LspSession {
       }) as { capabilities?: Record<string, unknown> } | null;
 
       if (initResult && typeof initResult.capabilities === 'object' && initResult.capabilities !== null) {
+        const posEnc = initResult.capabilities.positionEncoding;
+        if (typeof posEnc === 'string' && posEnc.toLowerCase() !== 'utf-16') {
+          throw new Error(`LSP server "${this.serverId}" negotiated unsupported positionEncoding "${safeDisplay(posEnc)}" (expected utf-16).`);
+        }
         this.serverCapabilities = initResult.capabilities;
       }
       this.sendNotification('initialized', {});
@@ -320,19 +335,43 @@ export class LspSession {
       return;
     }
 
-    // Server -> client request (answer protocol queries accurately so servers never stall or crash)
+    // Server -> client request: answer safe read-only lifecycle queries accurately,
+    // and explicitly reject mutating or unsupported requests (e.g. workspace/applyEdit).
     if (msg.id !== undefined && msg.id !== null && typeof msg.method === 'string') {
-      let result: unknown = null;
       if (msg.method === 'workspace/configuration') {
         const items = (msg.params && typeof msg.params === 'object' && Array.isArray((msg.params as { items?: unknown }).items))
           ? (msg.params as { items: unknown[] }).items
           : [];
-        result = items.map(() => null);
-      } else if (msg.method === 'workspace/workspaceFolders') {
-        result = [{ uri: filePathToUri(this.workspaceRoot), name: path.basename(this.workspaceRoot) }];
+        try { this.writeFrame({ jsonrpc: '2.0', id: msg.id, result: items.map(() => null) }); } catch { /* ignore */ }
+        return;
+      }
+      if (msg.method === 'workspace/workspaceFolders') {
+        try {
+          this.writeFrame({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: [{ uri: filePathToUri(this.workspaceRoot), name: path.basename(this.workspaceRoot) }]
+          });
+        } catch { /* ignore */ }
+        return;
+      }
+      if (
+        msg.method === 'window/workDoneProgress/create'
+        || msg.method === 'client/registerCapability'
+        || msg.method === 'client/unregisterCapability'
+      ) {
+        try { this.writeFrame({ jsonrpc: '2.0', id: msg.id, result: null }); } catch { /* ignore */ }
+        return;
       }
       try {
-        this.writeFrame({ jsonrpc: '2.0', id: msg.id, result });
+        this.writeFrame({
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: {
+            code: -32601,
+            message: `Client does not support server request "${safeDisplay(msg.method)}".`
+          }
+        });
       } catch { /* ignore */ }
       return;
     }
@@ -396,16 +435,39 @@ export class LspSession {
     });
   }
 
-  sendRequest(method: string, params?: unknown, timeoutMs = this.timeoutMs): Promise<unknown> {
+  sendRequest(method: string, params?: unknown, timeoutMs = this.timeoutMs, signal?: AbortSignal): Promise<unknown> {
     this.lastUsedAt = Date.now();
+    if (signal?.aborted) {
+      return Promise.reject(new Error(`LSP request "${method}" aborted.`));
+    }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
+      const cleanup = (): void => {
+        signal?.removeEventListener('abort', onAbort);
+      };
+      const sendCancel = (): void => {
+        try { this.sendNotification('$/cancelRequest', { id }); } catch { /* ignore */ }
+      };
+      const onAbort = (): void => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        clearTimeout(timer);
+        sendCancel();
+        reject(new Error(`LSP request "${method}" aborted.`));
+      };
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        cleanup();
+        sendCancel();
         reject(new Error(`LSP request "${method}" timed out after ${timeoutMs}ms.`));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer });
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.pending.set(id, {
+        resolve: (val) => { cleanup(); resolve(val); },
+        reject: (err) => { cleanup(); reject(err); },
+        timer
+      });
       try {
         this.writeFrame({
           jsonrpc: '2.0',
@@ -416,6 +478,7 @@ export class LspSession {
       } catch (err: unknown) {
         this.pending.delete(id);
         clearTimeout(timer);
+        cleanup();
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });

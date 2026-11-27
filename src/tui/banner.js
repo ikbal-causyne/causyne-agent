@@ -7,6 +7,7 @@
  * CAUSYNE_ASCII=1 (7-bit only), and CAUSYNE_NO_ANIM=1.
  */
 import { homedir } from 'node:os';
+import { formatPermissionPresetLabel } from '../permissionPresets.js';
 import { safeDisplay } from './text.js';
 function cleanMeta(value) {
     return safeDisplay(typeof value === 'string' ? value : String(value ?? ''))
@@ -356,8 +357,11 @@ export function providerLabel(provider) {
 }
 function sessionInfo(info) {
     const provider = providerLabel(info.provider);
+    const permDisplay = info.permissionPreset
+        ? formatPermissionPresetLabel(info.permissionPreset)
+        : (info.autonomyMode ? formatPermissionPresetLabel(info.autonomyMode) : info.mode);
     const modeParts = [
-        info.autonomyMode ? `mode ${info.autonomyMode}` : info.mode,
+        permDisplay,
         info.tier ? `tier ${info.tier}` : undefined
     ].filter((part) => Boolean(part));
     return {

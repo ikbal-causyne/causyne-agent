@@ -129,7 +129,7 @@ test('gate: the directive rides the VOLATILE block, never a cached one', () => {
   const block = loop.slice(at, at + 400);
   assert.ok(!/cacheAnchor:\s*true/.test(block),
     'the per-step directive landed inside a cached block');
-  assert.match(block, /CURRENT AUTONOMY MODE/, 'it left the volatile tail');
+  assert.match(block, /PERMISSION PRESET:/, 'it left the volatile tail');
 });
 
 test('gate: directiveFor is silent unless there is something to say', () => {

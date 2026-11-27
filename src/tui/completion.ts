@@ -192,6 +192,7 @@ function commandItems(query = ''): CompletionItem[] {
     'plugins',
     'cortex',
     'gui',
+    'game',
     'compact',
     'undo',
     'diff',

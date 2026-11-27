@@ -42,6 +42,7 @@ export function homeStatusLine(arg = {}) {
 export const PRIMARY_ACTIONS = [
     { id: 'chat', label: 'chat', hint: 'talk to the agent here', kind: 'chat' },
     { id: 'gui', label: 'web studio', hint: 'open local browser GUI workspace (/gui)', kind: 'command', command: '/gui' },
+    { id: 'game', label: 'causyne game', hint: 'open Causyne Game studio workspace (/game)', kind: 'command', command: '/game' },
     {
         id: 'status',
         label: 'status',

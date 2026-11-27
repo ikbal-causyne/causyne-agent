@@ -5,6 +5,7 @@ import { canonicalModelId } from './modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
 import { causyneHome } from './utils/paths.js';
 import { listLocalOllamaDiskModels, pickPreferredLocalOllamaModel } from './zeroCostRouting.js';
+import { autonomyModeToPreset, normalizePermissionPreset } from './permissionPresets.js';
 import {
   ensureVaultDir,
   atomicWriteSecretFileSync,
@@ -78,15 +79,18 @@ export function applyProviderOverrides(
   providerOverride?: string | null,
   modelOverride?: string | null
 ): CausyneConfig {
+  const prevProvider = typeof config.provider === 'string' ? config.provider.trim().toLowerCase() : '';
+  const prevModel = typeof config.model === 'string' ? config.model.trim() : '';
   const nextProvider = typeof providerOverride === 'string' ? providerOverride.trim() : '';
   const nextModel = typeof modelOverride === 'string' ? modelOverride.trim() : '';
+  let changed = false;
   if (nextProvider) {
-    const prevNorm = typeof config.provider === 'string' ? config.provider.trim().toLowerCase() : '';
     const nextNorm = nextProvider.toLowerCase();
-    const prevAliases = prevNorm
-      ? (Object.hasOwn(PROVIDER_KEY_ALIASES, prevNorm) ? PROVIDER_KEY_ALIASES[prevNorm]! : [prevNorm])
+    const prevAliases = prevProvider
+      ? (Object.hasOwn(PROVIDER_KEY_ALIASES, prevProvider) ? PROVIDER_KEY_ALIASES[prevProvider]! : [prevProvider])
       : [];
-    const sameFamily = Boolean(prevNorm && (prevNorm === nextNorm || prevAliases.includes(nextNorm)));
+    const sameFamily = Boolean(prevProvider && (prevProvider === nextNorm || prevAliases.includes(nextNorm)));
+    if (prevProvider !== nextNorm) changed = true;
     config.apiKey = resolveProviderApiKey(config, nextProvider);
     config.provider = nextProvider;
     if (!sameFamily && !nextModel) {
@@ -94,7 +98,12 @@ export function applyProviderOverrides(
     }
   }
   if (nextModel) {
+    if (prevModel !== nextModel) changed = true;
     config.model = nextModel;
+  }
+  if (changed) {
+    delete config.reasoningEffort;
+    delete config.reasoningBudgetTokens;
   }
   return config;
 }
@@ -209,6 +218,10 @@ export function loadConfig(): CausyneConfig {
         }
       }
 
+      if (!normalizePermissionPreset(parsed.permissionPreset) && parsed.autonomyMode) {
+        parsed.permissionPreset = autonomyModeToPreset(parsed.autonomyMode);
+      }
+
       return parsed;
     } catch (e: unknown) {
       console.error('Error reading config.json:', e);
@@ -220,6 +233,7 @@ export function loadConfig(): CausyneConfig {
     provider: envDetected ? envDetected.provider : '',
     model: envDetected ? envDetected.model : '',
     apiKey: envDetected ? envDetected.apiKey : '',
+    permissionPreset: 'workspace-write',
     autonomyMode: 'B',
     tokenBudget: {
       enabled: false,

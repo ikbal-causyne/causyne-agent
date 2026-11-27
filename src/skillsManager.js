@@ -155,9 +155,8 @@ export function ensureSkillRepo(domain) {
  * Progressive disclosure. 100 skills is roughly 250 KB of markdown; injecting it
  * would consume the context window before the task was read. What goes in is one
  * line per skill — the name and WHEN TO USE IT — and the model pulls the body
- * with fs_read_skill only for the one it needs. This is the same contract
- * claude-code and openclaw use, and it is what makes a large skill library
- * possible at all.
+ * with fs_read_skill only for the one it needs, allowing a large skill library
+ * to scale cleanly without inflating prompt context.
  *
  * Capped at MAX_INDEXED_SKILLS. A workspace matching eight domains would
  * otherwise inject fifty-odd descriptions; the detected domains come first so

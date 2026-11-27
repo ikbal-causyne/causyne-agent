@@ -6,6 +6,12 @@ import { AgentLoop } from '../agentLoop.js';
 import type { AgentLoopEvent } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
 import type { ApprovalScope } from '../approvalGrants.js';
+import { loadConfig } from '../config.js';
+import { DEFAULT_MODEL_BY_PROVIDER, MODEL_CATALOGUE, PEER_MODEL_CATALOGUE } from '../modelCatalogue.js';
+import { resolveModelVariants } from '../modelVariants.js';
+import { McpClient } from '../mcp/mcpClient.js';
+import type { McpServerDefinition } from '../mcp/mcpClient.js';
+import { registerSessionMcpServers, unregisterSessionMcpServers } from '../mcp/mcpRegistry.js';
 import { createSession, getSession, saveSessionMessages, forkSession } from '../sessionJournal.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 import { safeDisplay } from '../tui/text.js';
@@ -40,11 +46,17 @@ import type {
   PromptRequest,
   PromptResponse,
   RequestPermissionResponse,
+  SessionConfigOption,
   SessionInfo,
+  SessionModelState,
   SessionModeState,
   SessionNotification,
   SessionUpdate,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
   SetSessionModeRequest,
+  SetSessionModelRequest,
+  SetSessionModelResponse,
   StopReason,
   ToolCall,
   ToolCallStatus,
@@ -90,6 +102,9 @@ interface AcpSession {
   title: string;
   cwd: string;
   modeId: string;
+  model?: string | undefined;
+  variant?: string | undefined;
+  mcpServers?: McpServerDefinition[] | undefined;
   loop: AgentLoop | null;
   busy: boolean;
   cancelled: boolean;
@@ -99,6 +114,41 @@ interface AcpSession {
   pendingPrompts: number;
   /** Session-local standing approvals. Forked/resumed sessions never inherit. */
   approvalScope: ApprovalScope;
+}
+
+const FORBIDDEN_ENV_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_SESSION_MCP_SERVERS = 16;
+
+function providerModelsForCatalogue(provider: string): string[] {
+  const norm = provider.trim().toLowerCase();
+  if (!norm) return [];
+  const peerKey = norm.startsWith('acp/') ? norm.slice(4) : norm;
+  if (Object.hasOwn(PEER_MODEL_CATALOGUE, peerKey)) {
+    return [...(PEER_MODEL_CATALOGUE[peerKey] ?? [])];
+  }
+  const providerLabelMatch: Record<string, string[]> = {
+    deepseek: ['DeepSeek'],
+    qwen: ['Qwen'],
+    dashscope: ['Qwen'],
+    'dashscope-byok': ['Qwen'],
+    anthropic: ['Anthropic'],
+    openai: ['OpenAI'],
+    gemini: ['Gemini'],
+    'gemini-free': ['Gemini (Free Tier)'],
+    moonshot: ['Moonshot'],
+    xai: ['xAI'],
+    groq: ['Groq (Free Tier)'],
+    cerebras: ['Cerebras (Free Tier)'],
+    openrouter: ['OpenRouter (Free Tier)'],
+    mistral: ['Mistral (Free Tier)']
+  };
+  const labels = providerLabelMatch[norm] ?? [];
+  const models: string[] = [];
+  for (const label of labels) {
+    const entries = MODEL_CATALOGUE[label];
+    if (Array.isArray(entries)) models.push(...entries);
+  }
+  return models;
 }
 
 const MODE_TO_AUTONOMY: Record<string, 'A' | 'B' | 'C'> = {
@@ -250,6 +300,7 @@ export class AcpServer {
     if (this.input && this.endListener) this.input.off('end', this.endListener);
     if (this.input && this.errorListener) this.input.off('error', this.errorListener);
     this.buffer = '';
+    const closingIds = [...this.sessions.keys()];
     for (const session of this.sessions.values()) {
       session.cancelled = true;
       session.generation++;
@@ -260,6 +311,7 @@ export class AcpServer {
       }
     }
     this.sessions.clear();
+    await Promise.allSettled(closingIds.map((id) => unregisterSessionMcpServers(id)));
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(new Error('server stopped'));
@@ -355,6 +407,12 @@ export class AcpServer {
         case ACP_METHODS.SET_MODE:
           this.writeResult(request.id, this.setMode(request.params as SetSessionModeRequest | undefined));
           return;
+        case ACP_METHODS.SET_MODEL:
+          this.writeResult(request.id, this.setModel(request.params as SetSessionModelRequest | undefined));
+          return;
+        case ACP_METHODS.SET_CONFIG_OPTION:
+          this.writeResult(request.id, this.setConfigOption(request.params as SetSessionConfigOptionRequest | undefined));
+          return;
         case ACP_METHODS.LIST:
           this.writeResult(request.id, this.listSessions(request.params as ListSessionsRequest | undefined));
           return;
@@ -404,23 +462,94 @@ export class AcpServer {
     return error;
   }
 
+  private parseSessionMcpServers(raw: unknown, cwd: string): McpServerDefinition[] {
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw)) {
+      throw this.paramsError('mcpServers must be an array');
+    }
+    if (raw.length > MAX_SESSION_MCP_SERVERS) {
+      throw this.paramsError(`Maximum ${MAX_SESSION_MCP_SERVERS} MCP servers per session exceeded`);
+    }
+    const definitions: McpServerDefinition[] = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        throw this.paramsError('Each MCP server entry must be an object');
+      }
+      const item = entry as Record<string, unknown>;
+      const rawType = typeof item.type === 'string' ? item.type.trim().toLowerCase() : '';
+      if (rawType === 'http' || rawType === 'sse' || typeof item.url === 'string') {
+        throw this.paramsError('HTTP/SSE MCP servers are not supported by this agent');
+      }
+      if (typeof item.name !== 'string' || !item.name.trim()) {
+        throw this.paramsError('Stdio MCP server requires a non-empty name');
+      }
+      if (typeof item.command !== 'string' || !item.command.trim()) {
+        throw this.paramsError('Stdio MCP server requires a non-empty command');
+      }
+      if (!Array.isArray(item.args) || !item.args.every((arg) => typeof arg === 'string')) {
+        throw this.paramsError('Stdio MCP server requires an args string array');
+      }
+      let env: Record<string, string> | undefined;
+      if (item.env !== undefined) {
+        const mapped = Object.create(null) as Record<string, string>;
+        if (Array.isArray(item.env)) {
+          for (const pair of item.env) {
+            if (!pair || typeof pair !== 'object' || Array.isArray(pair)) {
+              throw this.paramsError('Stdio MCP server env entries must be { name, value } objects');
+            }
+            const rec = pair as Record<string, unknown>;
+            if (typeof rec.name !== 'string' || !rec.name || typeof rec.value !== 'string') {
+              throw this.paramsError('Stdio MCP server env entries require string name and value');
+            }
+            if (!FORBIDDEN_ENV_KEYS.has(rec.name)) mapped[rec.name] = rec.value;
+          }
+        } else if (typeof item.env === 'object' && item.env !== null) {
+          for (const [k, v] of Object.entries(item.env as Record<string, unknown>)) {
+            if (typeof v !== 'string') {
+              throw this.paramsError('Stdio MCP server env values must be strings');
+            }
+            if (!FORBIDDEN_ENV_KEYS.has(k)) mapped[k] = v;
+          }
+        } else {
+          throw this.paramsError('Stdio MCP server env must be an array or object');
+        }
+        if (Object.keys(mapped).length > 0) env = { ...mapped };
+      }
+      const def: McpServerDefinition = {
+        name: item.name.trim(),
+        command: item.command.trim(),
+        args: [...item.args],
+        ...(env ? { env } : {}),
+        cwd
+      };
+      const problem = McpClient.validateDefinition(def);
+      if (problem) {
+        throw this.paramsError(`Invalid MCP server "${def.name}": ${problem}`);
+      }
+      definitions.push(def);
+    }
+    return definitions;
+  }
+
   private newSession(params: NewSessionRequest | undefined): NewSessionResponse {
     if (!params || typeof params.cwd !== 'string' || !params.cwd.trim()) {
       throw this.paramsError('session/new requires cwd');
-    }
-    if (params.mcpServers !== undefined && (!Array.isArray(params.mcpServers) || params.mcpServers.length > 0)) {
-      throw this.paramsError('MCP servers are not supported by this agent');
     }
     if (params.additionalDirectories !== undefined && (!Array.isArray(params.additionalDirectories) || params.additionalDirectories.length > 0)) {
       throw this.paramsError('additionalDirectories is not supported by this agent');
     }
     const cwd = this.resolveWorkspace(params.cwd);
+    const mcpServers = this.parseSessionMcpServers(params.mcpServers, cwd);
     this.bindWorkspace(cwd);
     if (this.sessions.size >= MAX_SESSIONS) {
       throw this.paramsError(`Maximum concurrent sessions (${MAX_SESSIONS}) exceeded`);
     }
     const record = createSession(cwd, 'Untitled', false);
     const session = this.addSession(record.id, cwd, record.title, MODES.currentModeId);
+    if (mcpServers.length > 0) {
+      session.mcpServers = mcpServers;
+      registerSessionMcpServers(session.id, mcpServers);
+    }
     return this.sessionResponse(session);
   }
 
@@ -478,10 +607,97 @@ export class AcpServer {
     };
   }
 
+  private buildSessionCatalog(session: AcpSession): { models?: SessionModelState; configOptions?: SessionConfigOption[] } {
+    let config: Record<string, unknown> = {};
+    try {
+      config = loadConfig() as Record<string, unknown>;
+    } catch {
+      config = {};
+    }
+    const provider = typeof config.provider === 'string' && config.provider.trim()
+      ? config.provider.trim()
+      : 'deepseek';
+    const configuredModel = typeof config.model === 'string' && config.model.trim()
+      ? config.model.trim()
+      : (DEFAULT_MODEL_BY_PROVIDER[provider.toLowerCase()] || '');
+    const activeModel = session.model || configuredModel;
+    const seen = new Set<string>();
+    const modelIds: string[] = [];
+    const addModel = (id: string) => {
+      const clean = id.trim();
+      if (!clean || seen.has(clean)) return;
+      seen.add(clean);
+      modelIds.push(clean);
+    };
+    if (activeModel) addModel(activeModel);
+    if (configuredModel) addModel(configuredModel);
+    for (const candidate of providerModelsForCatalogue(provider)) {
+      addModel(candidate);
+      if (modelIds.length >= 64) break;
+    }
+
+    const configOptions: SessionConfigOption[] = [];
+    const primaryModelId = activeModel || modelIds[0];
+    if (modelIds.length > 0 && primaryModelId) {
+      configOptions.push({
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        type: 'select',
+        currentValue: primaryModelId,
+        options: modelIds.map((id) => ({ value: id, name: id }))
+      });
+    }
+
+    const currentVariant = session.variant
+      || (typeof config.reasoningEffort === 'string' && config.reasoningEffort.trim() ? config.reasoningEffort.trim() : undefined);
+    if (activeModel) {
+      try {
+        const variantSpec = resolveModelVariants({
+          provider,
+          model: activeModel,
+          currentVariant: currentVariant ?? null
+        });
+        if (variantSpec.supported && variantSpec.options.length > 0) {
+          const resolvedVariant = currentVariant || variantSpec.defaultVariant || variantSpec.options[0]?.id;
+          configOptions.push({
+            id: 'thought_level',
+            name: 'Reasoning effort',
+            category: 'thought_level',
+            type: 'select',
+            ...(resolvedVariant ? { currentValue: resolvedVariant } : {}),
+            options: variantSpec.options.map((opt) => ({
+              value: opt.id,
+              name: opt.label,
+              description: opt.description
+            }))
+          });
+        }
+      } catch {
+        // Variant discovery is best-effort; never fail session creation.
+      }
+    }
+
+    const models: SessionModelState | undefined = modelIds.length > 0 && primaryModelId
+      ? {
+          currentModelId: primaryModelId,
+          availableModels: modelIds.map((id) => ({ modelId: id, name: id }))
+        }
+      : undefined;
+
+    return {
+      ...(models ? { models } : {}),
+      ...(configOptions.length > 0 ? { configOptions } : {})
+    };
+  }
+
   private sessionResponse(session: AcpSession): NewSessionResponse {
+    const catalog = this.buildSessionCatalog(session);
     return {
       sessionId: session.id,
-      modes: this.modesFor(session)
+      modes: this.modesFor(session),
+      ...(catalog.models ? { models: catalog.models } : {}),
+      ...(catalog.configOptions ? { configOptions: catalog.configOptions } : {})
     };
   }
 
@@ -538,10 +754,23 @@ export class AcpServer {
       readyState: 1,
       send: (payload: string) => { if (acceptingEvents && !session.cancelled && this.sessions.get(session.id) === session) this.onLoopPayload(session, payload); }
     };
+    const peerMcpServers = Array.isArray(session.mcpServers) && session.mcpServers.length > 0
+      ? session.mcpServers
+          .filter((def): def is McpServerDefinition & { command: string } => typeof def.command === 'string' && def.command.length > 0)
+          .map((def) => ({
+            name: def.name,
+            command: def.command,
+            args: Array.isArray(def.args) ? [...def.args] : [],
+            env: Object.entries(def.env ?? {}).map(([name, value]) => ({ name, value }))
+          }))
+      : [];
     const loopOptions = {
       workspaceRoot: session.cwd,
       memorySessionId: session.memorySessionId,
-      approvalScope: session.approvalScope
+      approvalScope: session.approvalScope,
+      ...(session.model ? { model: session.model } : {}),
+      ...(session.variant ? { variant: session.variant } : {}),
+      ...(peerMcpServers.length > 0 ? { peerMcpServers } : {})
     };
     let loop: AgentLoop;
     try {
@@ -818,6 +1047,45 @@ export class AcpServer {
     return {};
   }
 
+  private setModel(params: SetSessionModelRequest | undefined): SetSessionModelResponse {
+    if (!params || typeof params.modelId !== 'string' || !params.modelId.trim()) {
+      throw this.paramsError('session/set_model requires a non-empty modelId');
+    }
+    const session = this.requireSession(params.sessionId);
+    const modelId = params.modelId.trim();
+    if (modelId.length > 200) throw this.paramsError('modelId is too long');
+    session.model = modelId === 'default' ? undefined : modelId;
+    session.updatedAt = Date.now();
+    const { configOptions } = this.buildSessionCatalog(session);
+    if (configOptions) {
+      this.notify(session.id, { sessionUpdate: 'config_option_update', configOptions });
+    }
+    return configOptions ? { configOptions } : {};
+  }
+
+  private setConfigOption(params: SetSessionConfigOptionRequest | undefined): SetSessionConfigOptionResponse {
+    if (!params || typeof params.configId !== 'string' || typeof params.value !== 'string') {
+      throw this.paramsError('session/set_config_option requires configId and value');
+    }
+    const session = this.requireSession(params.sessionId);
+    const configId = params.configId.trim().toLowerCase();
+    const value = params.value.trim();
+    if (!value || value.length > 200) throw this.paramsError('Invalid config option value');
+    if (configId === 'model') {
+      session.model = value === 'default' ? undefined : value;
+    } else if (configId === 'thought_level' || configId === 'reasoning_effort' || configId === 'thinking' || configId === 'effort') {
+      session.variant = value === 'default' || value === 'auto' ? undefined : value;
+    } else {
+      throw this.paramsError(`Unknown config option: ${params.configId}`);
+    }
+    session.updatedAt = Date.now();
+    const { configOptions } = this.buildSessionCatalog(session);
+    if (configOptions) {
+      this.notify(session.id, { sessionUpdate: 'config_option_update', configOptions });
+    }
+    return configOptions ? { configOptions } : {};
+  }
+
   private canonicalizePath(targetPath: string): string {
     const resolved = path.resolve(targetPath);
     try {
@@ -854,6 +1122,7 @@ export class AcpServer {
       // Closing never blocks on cancellation.
     }
     this.sessions.delete(session.id);
+    void unregisterSessionMcpServers(session.id);
     return {};
   }
 
@@ -861,9 +1130,6 @@ export class AcpServer {
   private loadSession(params: LoadSessionRequest | undefined): LoadSessionResponse {
     if (!params || typeof params.sessionId !== 'string' || !params.sessionId) {
       throw this.paramsError('session/load requires sessionId');
-    }
-    if (params.mcpServers !== undefined && (!Array.isArray(params.mcpServers) || params.mcpServers.length > 0)) {
-      throw this.paramsError('MCP servers are not supported by this agent');
     }
     const live = this.sessions.get(params.sessionId);
     if (live) {
@@ -873,7 +1139,12 @@ export class AcpServer {
       if (live.busy || live.pendingPrompts > 0) {
         throw this.paramsError('session is busy; cancel it before loading');
       }
+      const mcpServers = this.parseSessionMcpServers(params.mcpServers, live.cwd);
       this.bindWorkspace(live.cwd);
+      if (mcpServers.length > 0) {
+        live.mcpServers = mcpServers;
+        registerSessionMcpServers(live.id, mcpServers);
+      }
       this.replayTranscript(live, getSession(live.memorySessionId)?.messages ?? []);
       return { modes: this.modesFor(live) };
     }
@@ -884,8 +1155,13 @@ export class AcpServer {
     if (record.workspace && this.canonicalizePath(record.workspace) !== cwd) {
       throw this.paramsError('session workspace does not match cwd');
     }
+    const mcpServers = this.parseSessionMcpServers(params.mcpServers, cwd);
     this.bindWorkspace(cwd);
     const session = this.addSession(record.id, cwd, record.title, MODES.currentModeId);
+    if (mcpServers.length > 0) {
+      session.mcpServers = mcpServers;
+      registerSessionMcpServers(session.id, mcpServers);
+    }
     this.replayTranscript(session, record.messages);
     return { modes: this.modesFor(session) };
   }

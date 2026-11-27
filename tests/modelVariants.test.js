@@ -7,13 +7,19 @@ import path from 'node:path';
 import {
   resolveModelVariants,
   matchVariantOption,
-  normalizeVariantToken
+  normalizeVariantToken,
+  reconcileConfigVariant
 } from '../src/modelVariants.js';
+import {
+  registerAntigravityModel,
+  resolveAgyCliModelAndEffort
+} from '../src/providers/antigravity.js';
+import { classifyAgentError } from '../src/agent/errorClassifier.js';
 import { extractAcpSessionVariants, normalizeAcpMcpServers } from '../src/acp/protocol.js';
 import { parseOpenCodeVerboseModels, saveCachedModels, getModelVariantsForPeer } from '../src/dynamicCatalogue.js';
 import { suggest } from '../src/tui/completion.js';
 import { runCommand, resolveCommand } from '../src/commands.js';
-import { loadConfig, saveConfig } from '../src/config.js';
+import { applyProviderOverrides, loadConfig, saveConfig } from '../src/config.js';
 
 test('resolveModelVariants dynamically adapts to BYOK, Free, Ollama, Antigravity, and ACP live peers', () => {
   // 1. OpenAI GPT-5.4 exposes xhigh; GPT-4o exposes none
@@ -339,6 +345,46 @@ test('/variant and /cortex commands register cleanly and persist/sync live varia
       { name: 'custom-env', command: 'mcp-bin', args: [], env: [{ name: 'FOO', value: 'bar' }] },
       { type: 'http', name: 'remote-http', url: 'http://127.0.0.1:4321/mcp', headers: [] }
     ]);
+
+    // 7. Antigravity CLI model/effort resolution never emits conflicting --effort flags
+    registerAntigravityModel('gemini-4-neon-high', 'Gemini 4 Neon (High)');
+    registerAntigravityModel('gemini-4-neon-xhigh', 'Gemini 4 Neon (XHigh)');
+    registerAntigravityModel('gemini-pro-orchestrator-neon', 'Orchestrator (Neon)');
+
+    assert.deepEqual(
+      resolveAgyCliModelAndEffort('Gemini 4 Neon (XHigh)', 'max'),
+      { modelSlug: 'gemini-4-neon-xhigh', effort: null }
+    );
+    assert.deepEqual(
+      resolveAgyCliModelAndEffort('Gemini 4 Neon (XHigh)', 'high'),
+      { modelSlug: 'gemini-4-neon-high', effort: null }
+    );
+    assert.deepEqual(
+      resolveAgyCliModelAndEffort('Orchestrator (Neon)', 'max'),
+      { modelSlug: 'gemini-pro-orchestrator-neon', effort: null }
+    );
+
+    // Cross-provider/model switches clear stale reasoningEffort cleanly
+    const switchedToAgy = applyProviderOverrides(
+      { provider: 'acp/opencode', model: 'opencode/deepseek-v4.1-flash-free', reasoningEffort: 'max' },
+      'antigravity',
+      'Gemini 4 Neon (XHigh)'
+    );
+    assert.equal(switchedToAgy.reasoningEffort, undefined);
+
+    const staleAgyConfig = { provider: 'antigravity', model: 'Gemini 4 Neon (XHigh)', reasoningEffort: 'max' };
+    assert.equal(reconcileConfigVariant(staleAgyConfig), '');
+    assert.equal(staleAgyConfig.reasoningEffort, undefined);
+
+    // Invalid model/effort CLI errors classify as non-retryable invalid_request_error
+    assert.equal(
+      classifyAgentError(new Error('Antigravity Agent (agy) failed: invalid model selection (--model "gemini-4-neon-xhigh" --effort "max"): --model gemini-4-neon-xhigh conflicts with --effort=max')),
+      'invalid_request_error'
+    );
+    assert.equal(
+      classifyAgentError(Object.assign(new Error('invalid model'), { code: 'AGY_INVALID_MODEL_SELECTION' })),
+      'invalid_request_error'
+    );
   } finally {
     if (prevHome === undefined) delete process.env.CAUSYNE_HOME;
     else process.env.CAUSYNE_HOME = prevHome;

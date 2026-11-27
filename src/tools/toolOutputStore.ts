@@ -26,6 +26,24 @@ function sanitizeIdentifier(id: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 64) : 'tool';
 }
 
+function sliceSafeHead(text: string, maxLen: number): string {
+  if (maxLen <= 0) return '';
+  if (text.length <= maxLen) return text;
+  let end = maxLen;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return text.slice(0, Math.max(0, end));
+}
+
+function sliceSafeTail(text: string, maxLen: number): string {
+  if (maxLen <= 0) return '';
+  if (text.length <= maxLen) return text;
+  let start = text.length - maxLen;
+  const first = text.charCodeAt(start);
+  if (first >= 0xdc00 && first <= 0xdfff && start + 1 < text.length) start += 1;
+  return text.slice(start);
+}
+
 export class ToolOutputStore {
   private config: ToolOutputStoreConfig;
 
@@ -92,8 +110,8 @@ export class ToolOutputStore {
     if (lines.length === 1) {
       const budget = Math.max(0, this.config.maxChars - notice.length);
       const half = Math.floor(budget / 2);
-      head = half > 0 ? text.slice(0, half) : '';
-      tail = half > 0 ? text.slice(-half) : '';
+      head = sliceSafeHead(text, half);
+      tail = sliceSafeTail(text, half);
     } else {
       const headCount = Math.max(0, Math.floor(this.config.headLines));
       const tailCount = Math.max(0, Math.floor(this.config.tailLines));
@@ -103,8 +121,8 @@ export class ToolOutputStore {
       if (rawHead.length + rawTail.length + notice.length > maxBudget) {
         const budget = Math.max(0, maxBudget - notice.length);
         const half = Math.floor(budget / 2);
-        head = half > 0 ? rawHead.slice(0, half) : '';
-        tail = half > 0 ? rawTail.slice(-half) : '';
+        head = sliceSafeHead(rawHead, half);
+        tail = sliceSafeTail(rawTail, half);
       } else {
         head = rawHead;
         tail = rawTail;

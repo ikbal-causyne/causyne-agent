@@ -58,6 +58,12 @@ import { codeVerifySyntax, codeListSymbols } from './codeTools.js';
 import { codeSearcher } from './codeSearcher.js';
 import { codeSearchAst } from './codeSearchAst.js';
 import { persistentShell } from './persistentShell.js';
+import { ptyTerminalTool } from './ptyTerminal.js';
+import { runCodeTool } from './ptcRuntime.js';
+import { presentDeliverableTool } from './presentDeliverable.js';
+import { sessionSearchTool } from '../sessionSearchIndex.js';
+import { goalLoopTool } from '../core/goalLoop.js';
+import { scheduleTool } from '../scheduler/scheduler.js';
 import { subagentOrchestrator } from './subagentOrchestrator.js';
 import { deferredMcpSearch } from './deferredMcpSearch.js';
 import { visionInspector } from './visionInspector.js';
@@ -85,6 +91,7 @@ import { gameCanvasAudit } from './gameCanvasAudit.js';
 import readNativeSkill from './readNativeSkill.js';
 import { createSkill } from './createSkill.js';
 import { resolveActiveTools } from '../toolPacks.js';
+import { normalizePermissionPreset } from '../permissionPresets.js';
 import { discoverTools, resolveMcpTool, isMcpToolName } from '../mcp/mcpRegistry.js';
 import { getPluginToolDefinitions, resolvePluginTool } from '../plugins/pluginManager.js';
 import { canonicalizeToolName } from './toolSelfRepair.js';
@@ -152,7 +159,7 @@ const TOOL_MODULES: readonly any[] = [
   checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
   generateMediaViaApi, memoryWrite, memoryRecall, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool, pluginsFactoryTool,
   astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
-  codeSearchAst, codeSearcher, persistentShell, subagentOrchestrator, deferredMcpSearch, visionInspector,
+  codeSearchAst, codeSearcher, persistentShell, ptyTerminalTool, runCodeTool, presentDeliverableTool, sessionSearchTool, goalLoopTool, scheduleTool, subagentOrchestrator, deferredMcpSearch, visionInspector,
   godotAutomator, gameBuilder, gameAssetFetcher,
   gameLoreForge, gameDialogueTreeGen, gameQuestArcBuilder,
   gameAnimationRig, gameAiBehaviorTree, gameCinematicSequencer,
@@ -413,7 +420,7 @@ export async function scanToolRegistry(provider: string | undefined = 'all', opt
   return scanAndAdaptToolsForProvider(tools as any, provider, options);
 }
 
-export async function getDynamicTools(autonomyMode: string | undefined = 'C', supportsVision: boolean | undefined = true, options: DynamicToolsOptions | undefined = {}): Promise<ToolDefinition[]> {
+export async function getDynamicTools(permissionPresetOrMode: string | undefined = 'danger-full-access', supportsVision: boolean | undefined = true, options: DynamicToolsOptions | undefined = {}): Promise<ToolDefinition[]> {
   const safeOptions = options && typeof options === 'object' ? options : {};
   // Plugin discovery reads validated JSON manifests only. Extension JavaScript
   // is never imported into the host process during startup or tool assembly;
@@ -470,16 +477,18 @@ export async function getDynamicTools(autonomyMode: string | undefined = 'C', su
     if (declined.size > 0) tools = tools.filter(t => !declined.has(t.name));
   } catch { /* provisioning unavailable: show everything rather than hide capability */ }
 
-  // Autonomy Mode Culling (Save tokens and prevent hallucinations on Mode A).
-  // Names here are canonical catalogue names — the legacy dotted/camelCase
-  // variants that used to pad these sets never matched a schema name and so
-  // culled nothing.
-  if (autonomyMode === 'A') {
-    const dangerousTools = new Set(['proc_term', 'gitOp', 'fs_delete', 'sysRun', 'sysRunBg', 'task_bg', 'terminal_persistent_shell', 'manage_local_dependencies']);
-    tools = tools.filter(t => !dangerousTools.has(t.name));
-  } else if (autonomyMode === 'B') {
-    const dangerousTools = new Set(['proc_term', 'manage_local_dependencies']);
-    tools = tools.filter(t => !dangerousTools.has(t.name));
+  // Permission Preset Tool Culling (save tokens and keep schema aligned with policy).
+  const activePreset = normalizePermissionPreset(permissionPresetOrMode) ?? 'danger-full-access';
+  if (activePreset === 'read-only') {
+    const readOnlyCulled = new Set([
+      'proc_term', 'gitOp', 'fs_delete', 'sysRun', 'sysRunBg', 'task_bg',
+      'terminal_persistent_shell', 'terminal_pty', 'manage_local_dependencies',
+      'fs_write', 'fs_edit', 'MultiEdit', 'apply_patch'
+    ]);
+    tools = tools.filter(t => !readOnlyCulled.has(t.name));
+  } else if (activePreset === 'workspace-write') {
+    const restrictedTools = new Set(['proc_term', 'manage_local_dependencies']);
+    tools = tools.filter(t => !restrictedTools.has(t.name));
   }
 
   return tools;

@@ -200,7 +200,11 @@ export class OpenRouterProvider extends LLMProvider {
     };
     const endpoint = this.baseUrl || OPENROUTER_CHAT_ENDPOINT;
 
-    const executeForModel = async (targetModel: string, useNativeTools: boolean): Promise<ChatResponse> => {
+    const executeForModel = async (
+      targetModel: string,
+      useNativeTools: boolean,
+      includeReasoning = true
+    ): Promise<ChatResponse> => {
       if (this.freeOnly) {
         this.assertFreeModel(targetModel);
       }
@@ -224,7 +228,7 @@ export class OpenRouterProvider extends LLMProvider {
       if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
         payload['max_tokens'] = Math.floor(options.maxTokens);
       }
-      if (this.reasoningEffort) {
+      if (includeReasoning && this.reasoningEffort) {
         if (this.reasoningEffort === 'off' || this.reasoningEffort === 'none') {
           payload['reasoning'] = { enabled: false };
         } else if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(this.reasoningEffort)) {
@@ -286,8 +290,21 @@ export class OpenRouterProvider extends LLMProvider {
     };
 
     const runWithToolFallback = async (targetModel: string): Promise<ChatResponse> => {
+      const runWithReasoningFallback = async (useNativeTools: boolean): Promise<ChatResponse> => {
+        try {
+          return await executeForModel(targetModel, useNativeTools, true);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const status = err instanceof ProviderHttpError ? err.status : null;
+          const rejectedReasoning = Boolean(this.reasoningEffort)
+            && (status === 400 || status === 404)
+            && /(?:reasoning|effort|require_parameters|no endpoints found|unsupported|invalid)/i.test(msg);
+          if (!rejectedReasoning) throw err;
+          return await executeForModel(targetModel, useNativeTools, false);
+        }
+      };
       try {
-        return await executeForModel(targetModel, hasTools);
+        return await runWithReasoningFallback(hasTools);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         const status = err instanceof ProviderHttpError ? err.status : null;
@@ -296,7 +313,7 @@ export class OpenRouterProvider extends LLMProvider {
           && (status === 400 || status === 404)
           && /(?:does not support tool|support tool use|tool[s ]+not supported|no endpoints found.*tool|require_parameters)/i.test(msg)
         ) {
-          return await executeForModel(targetModel, false);
+          return await runWithReasoningFallback(false);
         }
         throw err;
       }

@@ -3,7 +3,7 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
-import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
+import { ProviderHttpError, requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 import { resolveBudgetTokensForVariant } from '../modelVariants.js';
 export class QwenByokProvider extends LLMProvider {
@@ -108,17 +108,33 @@ export class QwenByokProvider extends LLMProvider {
                 }
             }
         };
-        const data = wantsStreaming(options)
+        const runQwenRequest = async (reqPayload) => (wantsStreaming(options)
             ? await streamOpenAICompatibleChat({
                 ...requestOpts,
-                payload,
+                payload: reqPayload,
                 onChunk: options.onChunk,
                 onReasoningChunk: options.onReasoningChunk
             })
             : await safeProviderFetchJson({
                 ...requestOpts,
-                body: JSON.stringify(payload)
-            });
+                body: JSON.stringify(reqPayload)
+            }));
+        let data;
+        try {
+            data = await runQwenRequest(payload);
+        }
+        catch (err) {
+            const rejectedThinking = ('enable_thinking' in payload || 'thinking_budget' in payload)
+                && err instanceof ProviderHttpError
+                && err.status === 400
+                && /(?:enable_thinking|thinking_budget|thinking|unsupported|not supported|invalid|unknown)/i.test(err.message);
+            if (!rejectedThinking)
+                throw err;
+            const fallbackPayload = { ...payload };
+            delete fallbackPayload['enable_thinking'];
+            delete fallbackPayload['thinking_budget'];
+            data = await runQwenRequest(fallbackPayload);
+        }
         const normalized = normalizeOpenAIChatChoiceResponse(data, {
             prefix: 'call_qwen',
             freeFormPaths

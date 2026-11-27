@@ -85,6 +85,7 @@ export const PACKS = {
         'resolve_act',
         'palmier_act',
         'document_forge',
+        'present',
         'open_source_tool_provisioner'
     ],
     system: [
@@ -98,6 +99,7 @@ export const PACKS = {
         'computer_use',
         'process_list',
         'proc_term',
+        'terminal_pty',
         'archive',
         'clipboard',
         'desktop_open',
@@ -119,6 +121,10 @@ export const PACKS = {
         'apply_patch',
         'code_repo_map',
         'task_bg',
+        'run_code',
+        'session_search',
+        'goal',
+        'schedule',
         'pdf_read'
     ],
     reverse_engineering: [

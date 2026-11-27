@@ -2,7 +2,6 @@
  * @file src/tools/payloadSanitizer.ts
  * Causyne Agent — Media Payload Ceilings & Format Sniffer
  *
- * Ported & elevated from OpenClaw (src/media/configured-max-bytes.ts).
  * Enforces strict per-media-kind byte limits (images, audio, video) and
  * validates container magic numbers before staging payloads to LLM APIs,
  * preventing multimodal payloads from overflowing context limits.

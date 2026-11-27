@@ -14,6 +14,11 @@ import { safeDisplay } from './tui/text.js';
 import { lspSessionManager } from './lsp/lspClient.js';
 import { backgroundTaskManager } from './backgroundTasks.js';
 import { closeAll as closeAllMcpServers } from './mcp/mcpRegistry.js';
+import {
+  normalizePermissionPreset,
+  presetToAutonomyMode,
+  type PermissionPresetId
+} from './permissionPresets.js';
 
 export type HeadlessOutputFormat = 'text' | 'json' | 'stream-json';
 export type AutonomyModeCode = 'A' | 'B' | 'C';
@@ -250,13 +255,16 @@ export function parseOutputFormat(raw?: unknown): HeadlessOutputFormat {
   throw new Error(`Invalid --output-format "${raw}". Expected one of: text, json, stream-json.`);
 }
 
-export function parsePermissionMode(raw?: unknown): AutonomyModeCode | undefined {
+export function parsePermissionPreset(raw?: unknown): PermissionPresetId | undefined {
   if (raw === undefined || raw === null || raw === '') return undefined;
-  const normalized = String(raw).trim().toUpperCase();
-  if (normalized === 'A' || normalized === 'SUPERVISED' || normalized === 'STRICT') return 'A';
-  if (normalized === 'B' || normalized === 'BALANCED' || normalized === 'DEFAULT') return 'B';
-  if (normalized === 'C' || normalized === 'AUTONOMOUS' || normalized === 'AUTO') return 'C';
-  throw new Error(`Invalid --permission-mode "${raw}". Expected A (supervised), B (balanced), or C (autonomous).`);
+  const preset = normalizePermissionPreset(String(raw));
+  if (preset) return preset;
+  throw new Error(`Invalid --permission-mode "${raw}". Expected read-only, workspace-write, or full-access.`);
+}
+
+export function parsePermissionMode(raw?: unknown): AutonomyModeCode | undefined {
+  const preset = parsePermissionPreset(raw);
+  return preset ? presetToAutonomyMode(preset) : undefined;
 }
 
 export function parseMaxTurns(raw?: unknown): number | undefined {
@@ -516,7 +524,7 @@ export async function runHeadlessTask(
 ): Promise<HeadlessRunResult> {
   const startedAt = Date.now();
   const format = parseOutputFormat(options.outputFormat);
-  const permissionMode = parsePermissionMode(options.permissionMode);
+  const permissionPreset = parsePermissionPreset(options.permissionMode);
   const variant = parseVariantOption(options.variant);
   const maxTurns = parseMaxTurns(options.maxTurns);
   const maxTokens = parseMaxTokens(options.maxTokens);
@@ -571,7 +579,13 @@ export async function runHeadlessTask(
         ...(variant ? { variant } : {})
       });
 
-  if (permissionMode) loop.autonomyOverride = permissionMode;
+  if (permissionPreset) {
+    if (typeof (loop as any).setPermissionPreset === 'function') {
+      (loop as any).setPermissionPreset(permissionPreset);
+    } else {
+      loop.autonomyOverride = presetToAutonomyMode(permissionPreset);
+    }
+  }
   if (options.provider) loop.providerOverride = options.provider;
   if (options.model) loop.modelOverride = options.model;
   if (variant) loop.variantOverride = variant;

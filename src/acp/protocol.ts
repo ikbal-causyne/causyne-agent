@@ -373,7 +373,19 @@ export interface SetSessionModelRequest {
   modelId: string;
 }
 
-export type SetSessionModelResponse = Record<string, never>;
+export interface SetSessionModelResponse {
+  configOptions?: SessionConfigOption[];
+}
+
+export interface SetSessionConfigOptionRequest {
+  sessionId: string;
+  configId: string;
+  value: string;
+}
+
+export interface SetSessionConfigOptionResponse {
+  configOptions?: SessionConfigOption[];
+}
 
 export interface AuthenticateRequest {
   methodId: string;
@@ -534,8 +546,14 @@ export interface CurrentModeUpdateNotification {
   currentModeId: string;
 }
 
+export interface ConfigOptionUpdateNotification {
+  sessionUpdate: 'config_option_update';
+  configOptions: SessionConfigOption[];
+}
+
 export type SessionUpdate =
   | AgentMessageChunkUpdate
+  | ConfigOptionUpdateNotification
   | AgentThoughtChunkUpdate
   | UserMessageChunkUpdate
   | ToolCallUpdateNotification

@@ -332,7 +332,7 @@ async function engineStatus(workspace: string, signal?: AbortSignal): Promise<Re
 export const nativeEngineTool = {
   schema: {
     name: 'native_engine',
-    description: 'Run an installed headless native engine directly. No MCP, no GUI automation, no screenshots. Start with status, then catalog. Use execute or batch with command ids from catalog; project/saveAs scope the document. export and render return artifact paths for immediate GUI/TUI preview. probe inspects media. An in-scope install is authorized by Mode C; supervised modes require explicit confirmation. Set open=true only when the user wants the artifact revealed in the OS.',
+    description: 'Run an installed headless native engine directly. No MCP, no GUI automation, no screenshots. Start with status, then catalog. Use execute or batch with command ids from catalog; project/saveAs scope the document. export and render return artifact paths for immediate GUI/TUI preview. probe inspects media. An in-scope install is authorized in Full access; Workspace Write requires explicit confirmation. Set open=true only when the user wants the artifact revealed in the OS.',
     parameters: {
       type: 'object',
       properties: {
@@ -372,7 +372,7 @@ export const nativeEngineTool = {
         keepGoing: { type: 'boolean', description: 'Batch continues after a failed command.' },
         query: { type: 'string', description: 'Catalog filter, inspect target, or media path for probe.' },
         open: { type: 'boolean', description: 'Reveal the resulting artifact in the OS after success.' },
-        confirm: { type: 'boolean', description: 'Explicit confirmation in supervised modes. Mode C authorizes in-scope installs without this flag.' }
+        confirm: { type: 'boolean', description: 'Explicit confirmation in Workspace Write. Full access authorizes in-scope installs without this flag.' }
       },
       required: ['action'],
       additionalProperties: false

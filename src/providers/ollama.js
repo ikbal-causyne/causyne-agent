@@ -271,8 +271,11 @@ export class OllamaProvider extends LLMProvider {
         if (this.reasoningEffort) {
             const loweredModel = (this.model || '').toLowerCase();
             if (loweredModel.includes('gpt-oss')) {
-                if (['low', 'medium', 'high'].includes(this.reasoningEffort)) {
-                    thinkParam = this.reasoningEffort;
+                const mapped = this.reasoningEffort === 'minimal'
+                    ? 'low'
+                    : (['xhigh', 'max', 'ultra'].includes(this.reasoningEffort) ? 'high' : this.reasoningEffort);
+                if (['low', 'medium', 'high'].includes(mapped)) {
+                    thinkParam = mapped;
                 }
             }
             else if (meta?.supportsThinking !== false && (meta?.supportsThinking === true || /qwen3|qwen-3|deepseek-r1|qwq|magistral|cogito/i.test(loweredModel))) {
@@ -284,7 +287,7 @@ export class OllamaProvider extends LLMProvider {
                 }
             }
         }
-        const buildPayload = (useNativeTools) => ({
+        const buildPayload = (useNativeTools, includeThink = true) => ({
             model: this.model,
             messages: !useNativeTools && hasTools
                 ? this.injectTextToolContracts(sanitizedMessages, options.tools)
@@ -292,7 +295,7 @@ export class OllamaProvider extends LLMProvider {
             stream: false,
             keep_alive: '10m',
             options: ollamaOptions,
-            ...(thinkParam !== undefined ? { think: thinkParam } : {}),
+            ...(includeThink && thinkParam !== undefined ? { think: thinkParam } : {}),
             ...(useNativeTools && adaptedTools ? { tools: adaptedTools } : {}),
             ...(options.jsonMode ? { format: 'json' } : {})
         });
@@ -320,20 +323,49 @@ export class OllamaProvider extends LLMProvider {
             }));
         let data;
         const tryingNativeTools = hasTools && !skipNativeTools;
+        let useThink = thinkParam !== undefined;
         try {
-            data = await runRequest(buildPayload(tryingNativeTools));
+            data = await runRequest(buildPayload(tryingNativeTools, useThink));
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             const status = err instanceof ProviderHttpError ? err.status : (typeof err?.status === 'number' ? err.status : null);
-            if (tryingNativeTools && status === 400 && /does not support tools|tool[s ]+not supported|unknown field.*tools/i.test(msg)) {
+            if (useThink && status === 400 && /(?:does not support thinking|invalid.*think|unknown field.*think|\bthink\b)/i.test(msg)) {
+                useThink = false;
+                const existing = ollamaMetaCache.get(cacheKey);
+                ollamaMetaCache.set(cacheKey, {
+                    ...(existing ?? { fetchedAt: Date.now() }),
+                    supportsThinking: false,
+                    fetchedAt: Date.now()
+                });
+                try {
+                    data = await runRequest(buildPayload(tryingNativeTools, false));
+                }
+                catch (retryErr) {
+                    const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                    const retryStatus = retryErr instanceof ProviderHttpError ? retryErr.status : (typeof retryErr?.status === 'number' ? retryErr.status : null);
+                    if (tryingNativeTools && retryStatus === 400 && /does not support tools|tool[s ]+not supported|unknown field.*tools/i.test(retryMsg)) {
+                        const latest = ollamaMetaCache.get(cacheKey);
+                        ollamaMetaCache.set(cacheKey, {
+                            ...(latest ?? { fetchedAt: Date.now() }),
+                            supportsTools: false,
+                            fetchedAt: Date.now()
+                        });
+                        data = await runRequest(buildPayload(false, false));
+                    }
+                    else {
+                        throw retryErr;
+                    }
+                }
+            }
+            else if (tryingNativeTools && status === 400 && /does not support tools|tool[s ]+not supported|unknown field.*tools/i.test(msg)) {
                 const existing = ollamaMetaCache.get(cacheKey);
                 ollamaMetaCache.set(cacheKey, {
                     ...(existing ?? { fetchedAt: Date.now() }),
                     supportsTools: false,
                     fetchedAt: Date.now()
                 });
-                data = await runRequest(buildPayload(false));
+                data = await runRequest(buildPayload(false, useThink));
             }
             else if (status === 404 && /model\b.*not found|pull/i.test(msg)) {
                 throw new ProviderHttpError(`Ollama model "${this.model}" is not installed locally. Run \`ollama pull ${this.model}\` or select an installed model with /model.`, { status: 404 });

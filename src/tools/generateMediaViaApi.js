@@ -2,6 +2,7 @@ import { causyneHome, resolveUserPath } from '../utils/paths.js';
 import { assertPublicWebUrl } from '../browser/urlPolicy.js';
 import { validateToolArguments } from './argumentValidation.js';
 import { assertSafeWorkspaceOutput } from './toolPathSafety.js';
+import { resolveConfigPermissionPreset } from '../permissionPresets.js';
 const MAX_MEDIA_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 async function readBoundedMediaResponse(response, maxBytes = MAX_MEDIA_DOWNLOAD_BYTES) {
     const declaredLen = Number(response.headers.get('content-length') ?? '0');
@@ -138,9 +139,9 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
     // Pre-Flight Consent Modal (`approval_request`) for Paid API Handoffs (unless in Mode C/Super Max and pre-approved)
     const approvalHost = resolveApprovalHost(sandbox);
     if (approvalHost && typeof approvalHost.waitForApproval === 'function') {
-        // The paid-media consent modal is skipped in Mode C (pre-approved) and in
+        // The paid-media consent modal is skipped in Full access and in
         // hardened developer emulator mode (secret-gated — see devMode.js).
-        if (!isDevEmulator(config) && config.autonomyMode !== 'C') {
+        if (!isDevEmulator(config) && resolveConfigPermissionPreset(config, 'danger-full-access') !== 'danger-full-access') {
             const approvalId = `media_${crypto.randomUUID()}`;
             if (typeof approvalHost.emitEvent === 'function') {
                 approvalHost.emitEvent({
@@ -367,7 +368,7 @@ export const generateMediaViaApi = {
             if (mediaType === 'video_animation')
                 return { success: false, code: 'MEDIA_PROVIDER_UNAVAILABLE', error: 'No supported video endpoint is configured. No media artifact was produced.' };
             const approvalHost = resolveApprovalHost(sandbox);
-            if (approvalHost?.waitForApproval && !isDevEmulator(config) && config.autonomyMode !== 'C') {
+            if (approvalHost?.waitForApproval && !isDevEmulator(config) && resolveConfigPermissionPreset(config, 'danger-full-access') !== 'danger-full-access') {
                 const approvalId = `media_${crypto.randomUUID()}`;
                 approvalHost.emitEvent?.({ type: 'approval_request', toolCallId: approvalId, tool: 'generate_media_via_api', args: { mediaType, targetProvider: 'pollinations' }, risk: 'monetary_cost' });
                 if (!await approvalHost.waitForApproval(approvalId))

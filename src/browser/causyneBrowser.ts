@@ -644,6 +644,7 @@ export interface BrowserActionResult {
 
 export interface BrowserRunOptions {
   workspace?: string;
+  signal?: AbortSignal | undefined;
 }
 
 interface RuntimeOptions {
@@ -1166,13 +1167,42 @@ export class CausyneBrowser {
     return this.workspace;
   }
 
-  private async enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+  private async enqueueOperation<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted) {
+      throw new Error('Browser operation aborted.');
+    }
     this.queuedOperations++;
     const previous = this.operationTail;
     let release!: () => void;
     this.operationTail = new Promise<void>(resolve => { release = resolve; });
-    await previous;
     try {
+      if (signal) {
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = (): void => {
+            reject(new Error('Browser operation aborted while waiting in queue.'));
+          };
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener('abort', onAbort, { once: true });
+          previous.then(
+            () => {
+              signal.removeEventListener('abort', onAbort);
+              resolve();
+            },
+            () => {
+              signal.removeEventListener('abort', onAbort);
+              resolve();
+            }
+          );
+        });
+      } else {
+        await previous;
+      }
+      if (signal?.aborted) {
+        throw new Error('Browser operation aborted.');
+      }
       return await operation();
     } finally {
       this.queuedOperations--;
@@ -1181,7 +1211,7 @@ export class CausyneBrowser {
   }
 
   async run(actions: BrowserAction[], options: BrowserRunOptions = {}): Promise<BrowserActionResult[]> {
-    return this.enqueueOperation(() => this.runUnlocked(actions, options));
+    return this.enqueueOperation(() => this.runUnlocked(actions, options), options.signal);
   }
 
   private async runUnlocked(actions: BrowserAction[], options: BrowserRunOptions = {}): Promise<BrowserActionResult[]> {

@@ -69,6 +69,18 @@ export class OpenAICompatibleProvider extends LLMProvider {
             || lowered.includes('deepseek-r1')
             || lowered.includes('reasoning');
     }
+    resolvePayloadReasoningEffort() {
+        const raw = typeof this.reasoningEffort === 'string' ? this.reasoningEffort.trim().toLowerCase() : '';
+        if (!raw || raw === 'off' || raw === 'none')
+            return null;
+        if (raw === 'low' || raw === 'medium' || raw === 'high')
+            return raw;
+        if (raw === 'minimal')
+            return 'low';
+        if (raw === 'xhigh' || raw === 'max' || raw === 'ultra')
+            return 'high';
+        return null;
+    }
     async chat(messages, options = {}) {
         const opts = options && typeof options === 'object' ? options : {};
         const endpoint = this.baseUrl || 'https://api.openai.com/v1/chat/completions';
@@ -82,8 +94,9 @@ export class OpenAICompatibleProvider extends LLMProvider {
         if (!this.rejectsSamplingParameters()) {
             payload['temperature'] = resolveTemperature(opts.temperature, 0.1);
         }
-        if (this.reasoningEffort && this.reasoningEffort !== 'off' && this.supportsReasoningEffort()) {
-            payload['reasoning_effort'] = this.reasoningEffort;
+        const effectiveEffort = this.supportsReasoningEffort() ? this.resolvePayloadReasoningEffort() : null;
+        if (effectiveEffort && effectiveEffort !== 'off') {
+            payload['reasoning_effort'] = effectiveEffort;
         }
         if (typeof opts.maxTokens === 'number' && Number.isFinite(opts.maxTokens) && opts.maxTokens >= 1) {
             const tokenLimit = Math.floor(opts.maxTokens);
@@ -157,7 +170,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
             const rejectedReasoningEffort = 'reasoning_effort' in payload
                 && err instanceof ProviderHttpError
                 && err.status === 400
-                && /(?:reasoning_effort|unrecognized|unknown field|extra inputs|not permitted|unsupported parameter)/i.test(err.message);
+                && /(?:reasoning_effort|effort|unrecognized|unknown field|extra inputs|not permitted|unsupported parameter|not supported|does not support|invalid value|must be one of)/i.test(err.message);
             if (!rejectedReasoningEffort)
                 throw err;
             const fallbackPayload = { ...payload };
