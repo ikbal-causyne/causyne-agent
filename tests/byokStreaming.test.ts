@@ -284,3 +284,33 @@ test('SSE accepts bare CR and split CRLF event delimiters', async () => {
     assert.equal(result.content, 'AB');
   });
 });
+
+test('SSE and NDJSON cancel open upstream readers when callbacks throw', async () => {
+  for (const mode of ['sse', 'ndjson'] as const) {
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const frame = mode === 'sse'
+          ? 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+          : '{"message":{"content":"partial"},"done":false}\n';
+        controller.enqueue(encoder.encode(frame));
+      },
+      cancel() { cancelled = true; }
+    });
+    await withMockFetch(async () => new Response(body, {
+      headers: { 'content-type': mode === 'sse' ? 'text/event-stream' : 'application/x-ndjson' }
+    }), async () => {
+      const provider = mode === 'sse'
+        ? new OpenAICompatibleProvider({
+          apiKey: 'fixture-key', baseUrl: 'https://api.example.test/v1/chat/completions', model: 'gpt-4o'
+        })
+        : new OllamaProvider({ model: 'qwen3:8b' });
+      await assert.rejects(provider.chat([{ role: 'user', content: 'hi' }], {
+        onChunk: () => { throw new Error('cancel fixture'); }
+      }), /cancel fixture/);
+      assert.equal(cancelled, true, mode);
+      assert.equal(body.locked, false, mode);
+    });
+  }
+});
