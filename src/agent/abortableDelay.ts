@@ -10,8 +10,8 @@ export function waitForAbortableDelay(
   durationMs: number,
   signal?: AbortSignal | null
 ): Promise<'elapsed' | 'aborted'> {
-  if (!Number.isFinite(durationMs) || durationMs < 0) {
-    return Promise.reject(new RangeError('Backoff duration must be a finite, nonnegative number'));
+  if (!Number.isFinite(durationMs) || durationMs < 0 || durationMs > 2_147_483_647) {
+    return Promise.reject(new RangeError('Backoff duration must be between 0 and 2147483647 ms'));
   }
   if (signal?.aborted) return Promise.resolve('aborted');
   if (durationMs === 0) return Promise.resolve('elapsed');
