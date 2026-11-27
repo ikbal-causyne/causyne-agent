@@ -275,18 +275,21 @@ async function consumeSseStream(
         throw new Error(`${providerLabel} SSE event buffer exceeded safety limit (${MAX_SSE_BUFFER_BYTES} bytes).`);
       }
 
-      let newlineIdx = buffer.indexOf('\n');
+      let newlineIdx = buffer.search(/[\r\n]/);
       while (newlineIdx !== -1) {
+        // Retain a trailing CR until the next chunk to distinguish CRLF.
+        if (buffer[newlineIdx] === '\r' && newlineIdx === buffer.length - 1) break;
+        const delimiterLength = buffer.slice(newlineIdx, newlineIdx + 2) === '\r\n' ? 2 : 1;
         const line = buffer.slice(0, newlineIdx);
-        buffer = buffer.slice(newlineIdx + 1);
+        buffer = buffer.slice(newlineIdx + delimiterLength);
         processLine(line);
-        newlineIdx = buffer.indexOf('\n');
+        newlineIdx = buffer.search(/[\r\n]/);
       }
     }
 
     buffer += decoder.decode();
     if (buffer.length > 0) {
-      for (const tailLine of buffer.split('\n')) {
+      for (const tailLine of buffer.split(/\r\n|\r|\n/)) {
         processLine(tailLine);
       }
     }
