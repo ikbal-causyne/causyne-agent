@@ -101,7 +101,12 @@ export function atomicWriteFileSync(targetPath, content, options = {}) {
             : content;
         const fd = fs.openSync(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, mode);
         try {
-            fs.writeSync(fd, payload, 0, payload.length);
+            let offset = 0;
+            while (offset < payload.length) {
+              const written = fs.writeSync(fd, payload, offset, payload.length - offset);
+              if (written <= 0) throw new Error('Atomic file write made no progress');
+              offset += written;
+            }
             fs.fsyncSync(fd);
         }
         finally {
