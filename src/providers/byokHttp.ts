@@ -309,7 +309,12 @@ export function redactTextSecrets(
       const trimmed = secret.trim();
       if (trimmed.length >= 6) {
         text = text.split(trimmed).join('[REDACTED]');
-        const encoded = encodeURIComponent(trimmed);
+        let encoded = trimmed;
+        try {
+          encoded = encodeURIComponent(trimmed);
+        } catch {
+          // The raw secret was already redacted; malformed UTF-16 has no URI encoding.
+        }
         if (encoded !== trimmed && encoded.length >= 6) {
           text = text.split(encoded).join('[REDACTED]');
         }
