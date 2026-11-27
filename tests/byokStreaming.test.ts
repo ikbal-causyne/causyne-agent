@@ -265,3 +265,22 @@ test('Ollama NDJSON propagates application callback failures', async () => {
     }), /callback fixture failure/);
   });
 });
+
+test('SSE accepts bare CR and split CRLF event delimiters', async () => {
+  const chunks: string[] = [];
+  await withMockFetch(async () => makeStreamResponse([
+    'data: {"choices":[{"delta":{"content":"A"}}]}\r\r',
+    'data: {"choices":[{"delta":{"content":"B"}}]}\r',
+    '\n\r',
+    '\ndata: [DONE]\r\r'
+  ]), async () => {
+    const provider = new OpenAICompatibleProvider({
+      apiKey: 'fixture-key', baseUrl: 'https://api.example.test/v1/chat/completions', model: 'gpt-4o'
+    });
+    const result = await provider.chat([{ role: 'user', content: 'hi' }], {
+      onChunk: (delta: string) => chunks.push(delta)
+    });
+    assert.deepEqual(chunks, ['A', 'B']);
+    assert.equal(result.content, 'AB');
+  });
+});
