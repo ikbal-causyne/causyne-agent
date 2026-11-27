@@ -316,12 +316,13 @@ async function consumeNdjsonStream(
     const stripped = rawLine.charCodeAt(0) === 0xfeff ? rawLine.slice(1) : rawLine;
     const trimmed = stripped.trim();
     if (!trimmed) return;
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (isRecord(parsed)) onObject(parsed);
+      parsed = JSON.parse(trimmed);
     } catch {
-      // Ignore malformed trailing fragments
+      return;
     }
+    if (isRecord(parsed)) onObject(parsed);
   };
 
   try {

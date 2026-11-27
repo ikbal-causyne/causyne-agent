@@ -243,14 +243,13 @@ async function consumeNdjsonStream(response, providerLabel, maxBytes, onObject, 
         const trimmed = stripped.trim();
         if (!trimmed)
             return;
+        let parsed;
         try {
-            const parsed = JSON.parse(trimmed);
-            if (isRecord(parsed))
-                onObject(parsed);
+          parsed = JSON.parse(trimmed);
+        } catch {
+          return;
         }
-        catch {
-            // Ignore malformed trailing fragments
-        }
+        if (isRecord(parsed)) onObject(parsed);
     };
     try {
         while (true) {
