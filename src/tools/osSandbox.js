@@ -377,7 +377,7 @@ export function buildSeatbeltProfile(options) {
         '/dev/stdout',
         '/dev/stderr'
     ];
-    lines.push(`(allow file-write* ${safeDeviceLiterals.map(p => `(literal "${p}")`).join(' ')})`);
+    lines.push(`(allow file-write* ${safeDeviceLiterals.map(p => `(literal "${p}")`).join(' ')} (prefix "/dev/ttys"))`);
     if (mode === 'workspace-write') {
         const writableSubpaths = new Set();
         const addWritable = (rawPath) => {

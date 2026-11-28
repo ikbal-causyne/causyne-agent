@@ -933,6 +933,8 @@ export class AntigravityProvider extends LLMProvider {
       'Follow the task scope and execute directly with your native tools (or Causyne host tools when needed). ' +
       'When target files and verification commands are specified, read those files, apply minimal accurate edits, and verify with the project test/build command — avoid redundant git log, find, or throwaway scratch probes. ' +
       'Put file contents directly in edit/write arguments, NEVER reply with conversational pleasantries, and report verified outcomes or blockers concisely.\n\n' +
+      '[Personalization Directive]\n' +
+      'Strictly obey any Project Personalization (`.causyne/personalization.md`) and workspace instructions provided in the system messages—treat them as a high-priority binding operational contract for this project (vision, conventions, language, and style), subordinate only to safety and permission boundaries.\n\n' +
       '[Language & Communication Directive]\n' +
       'Communicate concisely and strictly in English with zero canned greetings.'
     );

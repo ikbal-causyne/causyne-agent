@@ -5,9 +5,9 @@ import { openInCanvas } from './filesAndCanvas.js';
 import type { CliCommandEntry } from './types.js';
 
 const QUICK_CLI_COMMANDS: readonly string[] = [
-  '/status', '/doctor', '/map', '/rules', '/checkpoints', '/undo',
-  '/worktree list', '/pr', '/tasks', '/mcp', '/skills', '/peers',
-  '/plugins', '/slop', '/policy', '/audit', '/eval'
+  '/status', '/doctor', '/map', '/personalization', '/rules', '/memory status',
+  '/checkpoints', '/undo', '/worktree list', '/pr', '/tasks', '/mcp',
+  '/skills', '/peers', '/plugins', '/slop', '/policy', '/audit', '/eval'
 ];
 
 export interface CliPanelCallbacks {

@@ -3,10 +3,29 @@ import type { AppState } from './types.js';
 
 export const DRAFT_KEY = 'causyne/web/composerDraft/v1';
 export const THEME_KEY = 'causyne/web/theme/v1';
+export const DENSITY_KEY = 'causyne/web/density/v1';
+export const AUTOSCROLL_KEY = 'causyne/web/autoScroll/v1';
 export const PERMISSION_PRESET_KEY = 'causyne/web/permissionPreset/v1';
 export const LEGACY_MODE_KEY = 'causyne/web/autonomyMode/v1';
 export const STUDIO_WIDTH_KEY = 'causyne/web/studioWidth/v1';
 export const DEFAULT_STUDIO_W = 480;
+
+let autoScrollEnabled = true;
+
+export function isAutoScrollEnabled(): boolean {
+  return autoScrollEnabled;
+}
+
+export function applyDensity(density: string): void {
+  const next = density === 'compact' ? 'compact' : 'comfortable';
+  document.documentElement.setAttribute('data-density', next);
+  try { window.localStorage.setItem(DENSITY_KEY, next); } catch { /* ignore */ }
+}
+
+export function applyAutoScrollPref(enabled: boolean): void {
+  autoScrollEnabled = Boolean(enabled);
+  try { window.localStorage.setItem(AUTOSCROLL_KEY, autoScrollEnabled ? '1' : '0'); } catch { /* ignore */ }
+}
 
 const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
 export const TOKEN_STORE_KEY = `causyne/web/token:${window.location.origin}`;
@@ -63,8 +82,10 @@ export const state: AppState = {
   currentDir: '',
   parentDir: '',
   studioTab: 'start',
+  studioOpenTabs: ['start'],
   studioSplit: false,
   studioSecondaryTab: 'terminal',
+  studioSplitRatio: 0.5,
   studioExpanded: false,
   studioWidth: DEFAULT_STUDIO_W,
   terminalSessions: [],
@@ -82,6 +103,7 @@ export const state: AppState = {
   browserUrl: '',
   browserSrcdoc: '',
   browserViewport: 'desktop',
+  browserFrameStrictSandbox: false,
   liveBrowserActive: false,
   liveBrowserVisible: false,
   liveBrowserRuntime: null,
@@ -183,7 +205,7 @@ export function updateComposerMetrics(): void {
 
 export function scrollToBottom(force: boolean, smooth = false): void {
   if (!dom.threadWrapEl) return;
-  if (force || state.stickToBottom) {
+  if (force || (autoScrollEnabled && state.stickToBottom)) {
     if (smooth && typeof dom.threadWrapEl.scrollTo === 'function') {
       dom.threadWrapEl.scrollTo({ top: dom.threadWrapEl.scrollHeight, behavior: 'smooth' });
     } else {
@@ -212,6 +234,10 @@ export function restorePersistedPreferences(): void {
   try {
     const savedTheme = window.localStorage.getItem(THEME_KEY);
     if (savedTheme === 'light' || savedTheme === 'dark') applyTheme(savedTheme);
+    const savedDensity = window.localStorage.getItem(DENSITY_KEY);
+    if (savedDensity === 'compact' || savedDensity === 'comfortable') applyDensity(savedDensity);
+    const savedAutoScroll = window.localStorage.getItem(AUTOSCROLL_KEY);
+    if (savedAutoScroll === '0' || savedAutoScroll === '1') applyAutoScrollPref(savedAutoScroll === '1');
     const savedPreset = window.localStorage.getItem(PERMISSION_PRESET_KEY);
     if (savedPreset === 'read-only' || savedPreset === 'workspace-write' || savedPreset === 'danger-full-access') {
       state.permissionPreset = savedPreset;

@@ -17,6 +17,7 @@ import { serveStaticAsset } from './server/staticAssets.js';
 import { extractSessionFileEvidence, extractSessionTouchedFiles, normalizeWorkspaceRelCandidate } from './server/sessionTranscript.js';
 import { attachRunStream, createDefaultLoopFactory, pushRunFrame } from './server/activeRuns.js';
 import { handleCoreRoutes } from './server/routesCore.js';
+import { handleSettingsRoutes } from './server/routesSettings.js';
 import { handleWorkspaceRoutes } from './server/routesWorkspace.js';
 import { handleBrowserRoutes } from './server/routesBrowser.js';
 import { handleTerminalRoutes } from './server/routesTerminal.js';
@@ -167,6 +168,8 @@ export async function startSkybridgeServer(options = {}) {
         }
         try {
             if (await handleCoreRoutes(req, res, parsedUrl, ctx))
+                return;
+            if (await handleSettingsRoutes(req, res, parsedUrl, ctx))
                 return;
             if (await handleWorkspaceRoutes(req, res, parsedUrl, ctx))
                 return;

@@ -2,7 +2,7 @@ import { dom } from './dom.js';
 import { apiUrl, authHeaders, state, updateComposerMetrics } from './state.js';
 import { isHtmlOrSvgPath } from './validators.js';
 import { renderMarkdownInto } from './markdown.js';
-import { openStudio } from './studioShell.js';
+import { openStudio, setStudioTabDynamicTitle } from './studioShell.js';
 let callbacks = {
     attachWorkspaceFile: () => { },
     saveCurrentSessionWorkspace: () => { },
@@ -93,6 +93,8 @@ export function openInCanvas(suggestedPath, content, preferPreview) {
     const targetPath = suggestedPath || dom.filePathInput.value || 'draft.idoc.md';
     dom.filePathInput.value = targetPath;
     dom.fileContentInput.value = content || '';
+    const shortName = targetPath.split('/').pop() || targetPath;
+    setStudioTabDynamicTitle('canvas', shortName);
     const ver = recordArtifactVersion(targetPath, content || '');
     dom.fileStatusEl.textContent = `Canvas · ${targetPath} (v${ver})`;
     setCanvasPreviewMode(Boolean(preferPreview));

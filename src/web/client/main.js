@@ -1,12 +1,12 @@
 import { byId, dom } from './dom.js';
 import { applyStudioWidth, restorePersistedPreferences, scrollToBottom, state, updateComposerMetrics } from './state.js';
 import { configureMarkdownCallbacks } from './markdown.js';
-import { bindStudioResizer, closeAllPopovers, closeStudio, configureStudioTabHandlers, endStudioResize, isStudioResizing, openStudio, positionPopover, restoreStudioLayoutPreference, setSecondaryStudioTab, setStudioTab, swapStudioSplitPanes, toggleStudioMaximize, toggleStudioNav, toggleStudioSplit } from './studioShell.js';
+import { bindStudioResizer, bindStudioSplitDivider, closeAllPopovers, closeStudio, configureStudioTabHandlers, endStudioResize, isStudioResizing, isStudioTabVisible, openStudio, positionPopover, restoreStudioLayoutPreference, setSecondaryStudioTab, swapStudioSplitPanes, toggleStudioMaximize, toggleStudioNav, toggleStudioSplit } from './studioShell.js';
 import { bindStudioStartEvents, configureStudioStartCallbacks } from './studioStart.js';
-import { bindTerminalPanelEvents, deactivateTerminalPanel, loadTerminalSessions, openNewTerminalSession } from './terminalPanel.js';
+import { bindTerminalPanelEvents, closeAllTerminalSessions, deactivateTerminalPanel, fitActiveTerminal, focusActiveTerminal, loadTerminalSessions, openNewTerminalSession } from './terminalPanel.js';
 import { bindFilesAndCanvasEvents, configureFilesAndCanvasCallbacks, loadFiles, openFile, openInCanvas, saveFile } from './filesAndCanvas.js';
 import { bindDiffPanelEvents, configureDiffPanelCallbacks, loadDiff } from './diffPanel.js';
-import { bindBrowserPanelEvents, openBrowserArtifact, openBrowserUrl, refreshLiveBrowserState, startLiveBrowserStream, stopLiveBrowserStream } from './browserPanel.js';
+import { bindBrowserPanelEvents, closeBrowserWorkspace, openBrowserArtifact, openBrowserUrl, refreshLiveBrowserState, startLiveBrowserStream, stopLiveBrowserStream, syncBrowserViewportToStage } from './browserPanel.js';
 import { bindCliPanelEvents, configureCliPanelCallbacks, loadCliCommands, loadCliOverview, renderCliQuickGrid, runCliCommand } from './cliPanel.js';
 import { bindGameLauncherEvents, loadGameStatus } from './gameLauncherUi.js';
 import { bindModelPickerEvents, configureModelPickerCallbacks, loadHealth, loadModels } from './modelPicker.js';
@@ -26,10 +26,23 @@ function wireModuleCallbacks() {
         onFilesTab: () => { void loadFiles(state.currentDir, dom.fileFilterEl.value || ''); },
         onDiffTab: () => { void loadDiff(); },
         onCliTab: () => { void loadCliOverview(); },
-        onTerminalActivate: () => { void loadTerminalSessions(); },
+        onTerminalActivate: () => {
+            void loadTerminalSessions().then(() => {
+                fitActiveTerminal();
+            });
+        },
         onTerminalDeactivate: deactivateTerminalPanel,
-        onBrowserActivate: () => { void refreshLiveBrowserState(false); startLiveBrowserStream(); },
-        onBrowserDeactivate: stopLiveBrowserStream
+        onTerminalClose: () => { void closeAllTerminalSessions(); },
+        onBrowserActivate: () => {
+            void refreshLiveBrowserState(false).then(() => { syncBrowserViewportToStage(false); });
+            startLiveBrowserStream();
+        },
+        onBrowserDeactivate: stopLiveBrowserStream,
+        onBrowserClose: () => { void closeBrowserWorkspace(); },
+        onLayoutResized: () => {
+            fitActiveTerminal();
+            syncBrowserViewportToStage(false);
+        }
     });
     configureStudioStartCallbacks({
         openNewTerminal: openNewTerminalSession,
@@ -67,7 +80,7 @@ function wireModuleCallbacks() {
         openInCanvas,
         openBrowserUrl,
         openBrowserArtifact,
-        openSettingsForUpgrade: openSettingsModal,
+        openSettingsForUpgrade: () => openSettingsModal('billing'),
         submitPrompt
     });
     configureComposerCallbacks({
@@ -134,9 +147,6 @@ function bindShellAndNavigationEvents() {
     if (dom.studioExpandBtn)
         dom.studioExpandBtn.addEventListener('click', toggleStudioMaximize);
     dom.studioCloseBtn.addEventListener('click', closeStudio);
-    document.querySelectorAll('.studio-tab').forEach((btn) => {
-        btn.addEventListener('click', () => setStudioTab(btn.getAttribute('data-tab') || 'start'));
-    });
     dom.plusBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const wasOpen = dom.plusPopover.classList.contains('open');
@@ -172,7 +182,11 @@ function bindShellAndNavigationEvents() {
     document.addEventListener('keydown', (e) => {
         if (document.activeElement === dom.liveViewportSurface && state.liveBrowserActive)
             return;
-        if (document.activeElement === dom.termViewport && state.activeTerminalId)
+        const inTerminal = Boolean(dom.termViewport
+            && document.activeElement
+            && dom.termViewport.contains(document.activeElement)
+            && state.activeTerminalId);
+        if (inTerminal && !(e.ctrlKey && !e.metaKey && !e.altKey && e.key === '`'))
             return;
         const mod = e.metaKey || e.ctrlKey;
         if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === '`') {
@@ -181,7 +195,7 @@ function bindShellAndNavigationEvents() {
             if (state.terminalSessions.length === 0)
                 void openNewTerminalSession();
             else
-                dom.termInput?.focus();
+                focusActiveTerminal();
         }
         else if (mod && e.altKey && e.key.toLowerCase() === 'p') {
             e.preventDefault();
@@ -255,7 +269,7 @@ function startBackgroundPollers() {
     setInterval(() => {
         if (state.activeController
             && dom.appEl.classList.contains('studio-open')
-            && state.studioTab === 'browser'
+            && isStudioTabVisible('browser')
             && state.browserEngine === 'agent'
             && !state.liveStreamConnected) {
             void refreshLiveBrowserState(false);
@@ -273,6 +287,7 @@ function bootstrap() {
     restoreStudioLayoutPreference();
     wireModuleCallbacks();
     bindStudioResizer();
+    bindStudioSplitDivider();
     bindStudioStartEvents();
     bindFilesAndCanvasEvents();
     bindDiffPanelEvents();

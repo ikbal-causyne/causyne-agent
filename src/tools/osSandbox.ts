@@ -433,7 +433,7 @@ export function buildSeatbeltProfile(options: OsSandboxWrapOptions): string {
     '/dev/stderr'
   ];
   lines.push(
-    `(allow file-write* ${safeDeviceLiterals.map(p => `(literal "${p}")`).join(' ')})`
+    `(allow file-write* ${safeDeviceLiterals.map(p => `(literal "${p}")`).join(' ')} (prefix "/dev/ttys"))`
   );
 
   if (mode === 'workspace-write') {

@@ -3,7 +3,10 @@ import { renderSidebarHtml } from './ui/sidebarTemplate.js';
 import { renderWorkspaceHtml } from './ui/workspaceTemplate.js';
 import { renderStudioHtml } from './ui/studioTemplate.js';
 import { renderModalsHtml } from './ui/modalsTemplate.js';
-import { SKYBRIDGE_STYLESHEET_URLS } from './server/staticAssets.js';
+import {
+  SKYBRIDGE_STYLESHEET_URLS,
+  SKYBRIDGE_VENDOR_SCRIPT_URLS
+} from './server/staticAssets.js';
 
 export { getCausyneFaviconSvg };
 
@@ -19,6 +22,9 @@ export function renderSkybridgeHtml(options: SkybridgeUiRenderOptions): string {
   const ver = escapeHtmlAttr(options.version || '0.0.0');
   const styleLinks = SKYBRIDGE_STYLESHEET_URLS
     .map((href) => `<link rel="stylesheet" href="${href}">`)
+    .join('\n');
+  const vendorScripts = SKYBRIDGE_VENDOR_SCRIPT_URLS
+    .map((src) => `<script nonce="${nonce}" src="${src}"></script>`)
     .join('\n');
 
   return [
@@ -40,6 +46,7 @@ export function renderSkybridgeHtml(options: SkybridgeUiRenderOptions): string {
     renderStudioHtml(),
     '</div>',
     renderModalsHtml(),
+    vendorScripts,
     `<script type="module" nonce="${nonce}" src="/assets/client/main.js"></script>`,
     '</body>',
     '</html>'

@@ -104,6 +104,12 @@ import { collectWorkingTreeDiff, renderDiffReview } from './diffReview.js';
 import { fetchFailedCiLogs, formatPrStatusReport, inspectPrStatus, preparePrDraft } from './prWorkflow.js';
 import { formatEvalScorecard, runCodingEvalSuite } from './benchmarks/codingEval.js';
 import { formatProjectRulesReport } from './projectInstructions.js';
+import {
+  deleteCausyneMemories,
+  readPersonalizationOverview,
+  saveMemoryPreferences,
+  savePersonalizationInstructions
+} from './personalization.js';
 import { buildRepoMap } from './codebase/repoMap.js';
 import { backgroundTaskManager } from './backgroundTasks.js';
 import {
@@ -1400,35 +1406,76 @@ export const COMMANDS: SlashCommandDefinition[] = [
 
   {
     name: 'cortex',
-    aliases: ['memory'],
+    aliases: ['memory', 'memories'],
     scope: 'local',
-    usage: '/cortex [status | list | search <query> | on | off | forget <id|--workspace>]',
-    description: 'Inspect, search, toggle, or clear persistent Cortex memory',
+    usage: '/cortex [status | list | search <query> | on | off | tool-assisted on|off | forget <id|--workspace|all>]',
+    description: 'Inspect, search, toggle, or clear Causyne & Cortex persistent memory',
     dialogTitle: 'Cortex Memory',
     complete: () => [
-      { value: 'status', label: 'status', description: 'show Cortex memory counts and engine status' },
+      { value: 'status', label: 'status', description: 'show memory controls, counts, and Cortex engine status' },
       { value: 'list', label: 'list', description: 'list recent memories stored for this workspace' },
       { value: 'search', label: 'search', description: 'semantic search across stored memories' },
-      { value: 'on', label: 'on', description: 'enable persistent Cortex memory recall' },
-      { value: 'off', label: 'off', description: 'disable persistent Cortex memory recall' },
-      { value: 'forget --workspace', label: 'forget --workspace', description: 'clear memories for the current workspace' }
+      { value: 'on', label: 'on', description: 'enable Causyne memories for this project (add "global" for all)' },
+      { value: 'off', label: 'off', description: 'disable Causyne memories for this project (add "global" for all)' },
+      { value: 'tool-assisted on', label: 'tool-assisted on', description: 'allow memories from MCP/web tool-assisted chats' },
+      { value: 'tool-assisted off', label: 'tool-assisted off', description: 'block memories from MCP/web tool-assisted chats' },
+      { value: 'forget --workspace', label: 'forget --workspace', description: 'clear memories for the current workspace' },
+      { value: 'forget all', label: 'forget all', description: 'clear all stored Causyne memories on this device' }
     ],
     run: async (argv, ctx = {}) => {
       const sub = String(argv[0] || 'status').trim().toLowerCase();
       const workspace = ctx.loop?.workspaceRoot || process.cwd();
+      const invalidateLoop = (): void => {
+        if (ctx.loop && 'staticContext' in ctx.loop) {
+          (ctx.loop as any).staticContext = null;
+        }
+      };
 
       if (sub === 'on' || sub === 'enable' || sub === 'off' || sub === 'disable') {
         const enabled = sub === 'on' || sub === 'enable';
-        const config = loadConfig();
-        const prev = config.cortex && typeof config.cortex === 'object' ? config.cortex : {};
-        config.cortex = { ...prev, enabled };
-        saveConfig(config);
+        const explicitScope = String(argv[1] || '').trim().toLowerCase();
+        const scopeArg: 'project' | 'global' = explicitScope === 'global'
+          ? 'global'
+          : explicitScope === 'project'
+            ? 'project'
+            : (ctx.loop?.workspaceRoot ? 'project' : 'global');
+        const policy = saveMemoryPreferences(workspace, scopeArg, { enabled });
+        if (scopeArg === 'global') {
+          const config = loadConfig();
+          const prev = config.cortex && typeof config.cortex === 'object' ? config.cortex : {};
+          config.cortex = { ...prev, enabled };
+          saveConfig(config);
+        }
         if (ctx.loop) {
           ctx.loop.config = loadConfig();
         }
+        invalidateLoop();
         return ok(
-          `Cortex persistent memory is now ${enabled ? 'ENABLED' : 'DISABLED'}.`,
+          `Causyne & Cortex memory (${scopeArg}) is now ${policy.enabled ? 'ENABLED' : 'DISABLED'}.`,
           { effect: 'inline' }
+        );
+      }
+
+      if (sub === 'tool-assisted' || sub === 'tool-memory') {
+        const toggle = String(argv[1] || '').trim().toLowerCase();
+        const scopeArg = String(argv[2] || 'project').trim().toLowerCase() === 'global' ? 'global' : 'project';
+        if (toggle !== 'on' && toggle !== 'off') {
+          return fail('Usage: /memory tool-assisted on|off [project|global]');
+        }
+        const policy = saveMemoryPreferences(workspace, scopeArg, { allowToolAssisted: toggle === 'on' });
+        invalidateLoop();
+        return ok(
+          `Tool-assisted chat memories (${scopeArg}) are now ${policy.allowToolAssisted ? 'ALLOWED' : 'BLOCKED'}.`,
+          { effect: 'inline' }
+        );
+      }
+
+      if (sub === 'forget' && (String(argv[1] || '').trim().toLowerCase() === 'all' || String(argv[1] || '').trim().toLowerCase() === 'project')) {
+        const delScope = String(argv[1] || '').trim().toLowerCase() === 'all' ? 'all' : 'project';
+        const deleted = deleteCausyneMemories(workspace, delScope);
+        invalidateLoop();
+        return ok(
+          `Deleted Causyne memories (${delScope}): ${deleted.factsRemoved} facts, ${deleted.observationsRemoved} observations, ${deleted.summariesRemoved} summaries removed.`
         );
       }
 
@@ -3843,11 +3890,145 @@ export const COMMANDS: SlashCommandDefinition[] = [
     name: 'rules',
     scope: 'local',
     usage: '/rules',
-    description: 'Show hierarchical project instructions loaded from CAUSYNE.md, AGENTS.md, CLAUDE.md, and .causyne/rules/',
+    description: 'Show hierarchical project instructions loaded from .causyne/personalization.md, CAUSYNE.md, AGENTS.md, CLAUDE.md, and .causyne/rules/',
     dialogTitle: 'Project Rules',
     run: async (_argv, ctx = {}) => {
       const ws = ctx.loop?.workspaceRoot || process.cwd();
       return ok(formatProjectRulesReport(ws));
+    }
+  },
+
+  {
+    name: 'personalization',
+    aliases: ['persona', 'instructions'],
+    scope: 'local',
+    usage: '/personalization [show | set <text> | append <text> | global <text> | clear [project|global] | memory on|off [global] | tool-memory on|off [global] | forget [project|all]]',
+    description: 'Manage per-project personalization instructions (.causyne/personalization.md), global instructions, and Causyne memory controls',
+    dialogTitle: 'Personalization',
+    complete: () => [
+      { value: 'show', label: 'show', description: 'inspect project & global personalization and memory controls' },
+      { value: 'set ', label: 'set <text>', description: 'save per-project personalization (.causyne/personalization.md)' },
+      { value: 'append ', label: 'append <text>', description: 'append a directive to this project personalization' },
+      { value: 'global ', label: 'global <text>', description: 'save global instructions (~/.causyne/CAUSYNE.md)' },
+      { value: 'clear project', label: 'clear project', description: 'clear this project personalization' },
+      { value: 'clear global', label: 'clear global', description: 'clear global instructions' },
+      { value: 'memory on', label: 'memory on', description: 'enable Causyne memories for this project' },
+      { value: 'memory off', label: 'memory off', description: 'disable Causyne memories for this project' },
+      { value: 'tool-memory on', label: 'tool-memory on', description: 'allow memories from MCP/web tool-assisted chats' },
+      { value: 'tool-memory off', label: 'tool-memory off', description: 'disable memories from MCP/web tool-assisted chats' },
+      { value: 'forget project', label: 'forget project', description: 'delete stored memories for this project' },
+      { value: 'forget all', label: 'forget all', description: 'delete all Causyne memories on this device' }
+    ],
+    run: async (argv, ctx = {}) => {
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      const sub = String(argv[0] || 'show').toLowerCase();
+
+      const invalidateLoop = (): void => {
+        if (ctx.loop && 'staticContext' in ctx.loop) {
+          (ctx.loop as any).staticContext = null;
+        }
+      };
+
+      const renderOverview = (): string => {
+        const info = readPersonalizationOverview(ws);
+        const lines = [
+          'Causyne Personalization & Memory',
+          `  Workspace         : ${safeDisplay(info.workspaceRoot)}`,
+          `  Project file      : ${info.project.displayPath} (${info.project.exists ? `${info.project.bytes} bytes` : 'not set'})`,
+          `  Global file       : ${info.global.displayPath} (${info.global.exists ? `${info.global.bytes} bytes` : 'not set'})`,
+          `  Memories          : ${info.memory.enabled ? 'enabled' : 'disabled'} (source: ${info.memory.source})`,
+          `  Tool-assisted mem : ${info.memory.allowToolAssisted ? 'allowed' : 'blocked'} (MCP/web chats)`,
+          `  Stored memories   : ${info.memoryStats.projectFacts} project facts (${info.memoryStats.totalFacts} total), ${info.memoryStats.projectObservations} project observations (${info.memoryStats.totalObservations} total)`
+        ];
+        if (info.project.content.trim()) {
+          lines.push('', 'Project Personalization (.causyne/personalization.md):', info.project.content.trim());
+        }
+        if (info.global.content.trim()) {
+          lines.push('', 'Global Instructions (~/.causyne/CAUSYNE.md):', info.global.content.trim());
+        }
+        if (info.activeRules.length > 0) {
+          lines.push('', `Active Instruction Files (${info.activeRules.length}):`);
+          for (const r of info.activeRules) {
+            lines.push(`  • [${r.scope}] ${safeDisplay(r.label)} (${r.bytes} bytes)`);
+          }
+        }
+        lines.push(
+          '',
+          'Usage: /personalization set <text> | append <text> | global <text> | clear [project|global] | memory on|off [global] | tool-memory on|off [global] | forget [project|all]'
+        );
+        return lines.join('\n');
+      };
+
+      try {
+        if (sub === 'show' || sub === 'status') {
+          return ok(renderOverview());
+        }
+        if (sub === 'set') {
+          const text = argv.slice(1).join(' ').trim();
+          if (!text) return fail('Usage: /personalization set <project instructions>');
+          const doc = savePersonalizationInstructions(ws, 'project', text);
+          invalidateLoop();
+          return ok(`Saved project personalization to ${doc.displayPath} (${doc.bytes} bytes). Active immediately for this workspace.`);
+        }
+        if (sub === 'append') {
+          const text = argv.slice(1).join(' ').trim();
+          if (!text) return fail('Usage: /personalization append <additional project instruction>');
+          const existing = readPersonalizationOverview(ws).project.content.trim();
+          const combined = existing ? `${existing}\n\n${text}` : text;
+          const doc = savePersonalizationInstructions(ws, 'project', combined);
+          invalidateLoop();
+          return ok(`Updated project personalization at ${doc.displayPath} (${doc.bytes} bytes). Active immediately for this workspace.`);
+        }
+        if (sub === 'global') {
+          const text = argv.slice(1).join(' ').trim();
+          if (!text) return fail('Usage: /personalization global <global instructions>');
+          const doc = savePersonalizationInstructions(ws, 'global', text);
+          invalidateLoop();
+          return ok(`Saved global instructions to ${doc.displayPath} (${doc.bytes} bytes).`);
+        }
+        if (sub === 'clear') {
+          const scopeArg = String(argv[1] || 'project').toLowerCase();
+          if (scopeArg !== 'project' && scopeArg !== 'global') {
+            return fail('Usage: /personalization clear [project|global]');
+          }
+          savePersonalizationInstructions(ws, scopeArg, '');
+          invalidateLoop();
+          return ok(`Cleared ${scopeArg} personalization instructions.`);
+        }
+        if (sub === 'memory') {
+          const toggle = String(argv[1] || '').toLowerCase();
+          const scopeArg = String(argv[2] || 'project').toLowerCase() === 'global' ? 'global' : 'project';
+          if (toggle !== 'on' && toggle !== 'off' && toggle !== 'inherit') {
+            return fail('Usage: /personalization memory on|off|inherit [project|global]');
+          }
+          const value = toggle === 'inherit' ? null : toggle === 'on';
+          const policy = saveMemoryPreferences(ws, scopeArg, { enabled: value });
+          invalidateLoop();
+          return ok(`Causyne memories (${scopeArg}): ${policy.enabled ? 'enabled' : 'disabled'} (effective source: ${policy.source}).`);
+        }
+        if (sub === 'tool-memory' || sub === 'tool-assisted') {
+          const toggle = String(argv[1] || '').toLowerCase();
+          const scopeArg = String(argv[2] || 'project').toLowerCase() === 'global' ? 'global' : 'project';
+          if (toggle !== 'on' && toggle !== 'off' && toggle !== 'inherit') {
+            return fail('Usage: /personalization tool-memory on|off|inherit [project|global]');
+          }
+          const value = toggle === 'inherit' ? null : toggle === 'on';
+          const policy = saveMemoryPreferences(ws, scopeArg, { allowToolAssisted: value });
+          invalidateLoop();
+          return ok(`Tool-assisted chat memories (${scopeArg}): ${policy.allowToolAssisted ? 'allowed' : 'blocked'} (effective source: ${policy.source}).`);
+        }
+        if (sub === 'forget' || sub === 'delete') {
+          const scopeArg = String(argv[1] || 'project').toLowerCase() === 'all' ? 'all' : 'project';
+          const deleted = deleteCausyneMemories(ws, scopeArg);
+          invalidateLoop();
+          return ok(
+            `Deleted Causyne memories (${scopeArg}): ${deleted.factsRemoved} facts, ${deleted.observationsRemoved} observations, ${deleted.summariesRemoved} summaries removed.`
+          );
+        }
+        return fail(`Unknown /personalization action "${safeDisplay(sub)}". Try: show, set, append, global, clear, memory, tool-memory, forget.`);
+      } catch (err) {
+        return fail(safeDisplay(errMsg(err)));
+      }
     }
   },
 

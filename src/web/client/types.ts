@@ -272,8 +272,10 @@ export interface AppState {
   currentDir: string;
   parentDir: string;
   studioTab: string;
+  studioOpenTabs: string[];
   studioSplit: boolean;
   studioSecondaryTab: string;
+  studioSplitRatio: number;
   studioExpanded: boolean;
   studioWidth: number;
   terminalSessions: TerminalSessionPayload[];
@@ -291,6 +293,7 @@ export interface AppState {
   browserUrl: string;
   browserSrcdoc: string;
   browserViewport: string;
+  browserFrameStrictSandbox: boolean;
   liveBrowserActive: boolean;
   liveBrowserVisible: boolean;
   liveBrowserRuntime: string | null;

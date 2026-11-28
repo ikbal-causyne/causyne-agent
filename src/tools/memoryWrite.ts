@@ -1,6 +1,7 @@
 import { getMemory, saveMemory } from '../memory.js';
 import { recordScopedFact } from '../memory/scopedFacts.js';
 import { cortexDb } from '../cortex/vectorDb.js';
+import { resolveEffectiveMemoryPolicy } from '../personalization.js';
 
 const MAX_FACTS = 100;
 
@@ -20,6 +21,7 @@ export interface MemoryWriteDependencies {
   workspaceRoot?: string | undefined;
   parentLoop?: {
     workspaceRoot?: string | undefined;
+    isMemoryPollutedByExternalTools?: () => boolean;
   } | undefined;
   broadcast?: (event: { type: string; content: string }) => void;
 }
@@ -86,8 +88,21 @@ export const memoryWrite = {
     }
 
     try {
-      const memory = getMemory();
       const workspace = dependencies?.parentLoop?.workspaceRoot || dependencies?.workspaceRoot;
+      const memPolicy = resolveEffectiveMemoryPolicy(workspace);
+      if (!memPolicy.enabled) {
+        return {
+          success: false,
+          error: 'Causyne memories are disabled in Personalization settings for this workspace/device. Enable memories to save facts.'
+        };
+      }
+      if (!memPolicy.allowToolAssisted && dependencies?.parentLoop?.isMemoryPollutedByExternalTools?.()) {
+        return {
+          success: false,
+          error: 'Saving memories from tool-assisted chats (MCP/web tools) is disabled in Personalization settings.'
+        };
+      }
+      const memory = getMemory();
       const { memory: updated, alreadyKnown } = recordScopedFact(memory, fact, {
         workspace,
         maxFacts: MAX_FACTS

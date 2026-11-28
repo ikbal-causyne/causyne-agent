@@ -17,10 +17,12 @@ The lockfile contained 47 dependency entries in total. Development and
 platform-specific optional entries account for most of the graph.
 
 The direct runtime dependencies are `@modelcontextprotocol/client`,
-`acorn-walk`, and `commander`. Direct development dependencies are
+`@xterm/addon-fit`, `@xterm/xterm`, `acorn-walk`, and `commander`. Direct development dependencies are
 `@babel/parser`, `@modelcontextprotocol/node`, `@modelcontextprotocol/server`,
 `@types/node`, `acorn`, `typescript`, and `zod`. The three direct MCP packages
-are licensed under Apache-2.0. Exact versions, transitive dependencies, license
+are licensed under Apache-2.0, and `@xterm/xterm` (6.0.0) and `@xterm/addon-fit`
+(0.11.0) are licensed under MIT with zero transitive dependencies and zero
+install scripts. Exact versions, transitive dependencies, license
 identifiers, and integrity hashes are recorded in `package-lock.json`.
 
 No dependency in the reviewed main lockfile was marked with an install script.
@@ -123,6 +125,38 @@ Tool contracts and headless substrate bindings are adapted under the terms of th
 > MIT License
 >
 > Copyright (c) 2026 morluto
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+
+The interactive workspace terminal UI in `src/web/client/terminalTheme.ts` and
+`src/web/client/terminalPanel.ts` integrates `@xterm/xterm` and `@xterm/addon-fit`
+under the MIT License, and incorporates OSC color tracking, contrast-aware cursor
+rendering, and side-panel dock interaction patterns adapted from MIT-licensed
+open-source terminal and dock UI implementations:
+
+> MIT License
+>
+> Copyright (c) 2014-2024 The xterm.js authors. All rights reserved.
+> Copyright (c) 2012-2013, Christopher Jeffrey (MIT License)
+> Copyright (c) Microsoft Corporation. All rights reserved.
+> Copyright (c) 2026 DeepSeek
 >
 > Permission is hereby granted, free of charge, to any person obtaining a copy
 > of this software and associated documentation files (the "Software"), to deal

@@ -168,7 +168,7 @@ export class AcpProvider extends LLMProvider {
       '   - Bundled Causyne skills must be read via the host tool `fs_read_skill`. Do NOT call peer-native `skill` or functions for Causyne skills. To read a skill, write `<tool_call>{"name": "fs_read_skill", "arguments": {"skill_id": "domain/name"}}</tool_call>` directly in your assistant text response.\n' +
       '   - To invoke a Causyne host tool, write `<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>` directly in your assistant text response with NO native function call in that step; Causyne will execute the host tool and return the result on the next turn.\n' +
       '2. WORKSPACE PATH BOUNDARY (NO /tmp):\n' +
-      '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.'
+      '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.\n\n[Personalization Directive]\nStrictly honor any Project Personalization (`.causyne/personalization.md`) and workspace instructions included in system context as a high-priority binding contract for this project (subordinate only to safety and sandbox boundaries).\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.'
     );
 
     if (tools && tools.length > 0) {
@@ -243,7 +243,8 @@ export class AcpProvider extends LLMProvider {
         '   - Bundled Causyne skills must be read via the host tool `fs_read_skill`. Do NOT call peer-native `skill` or functions for Causyne skills. To read a skill, write `<tool_call>{"name": "fs_read_skill", "arguments": {"skill_id": "domain/name"}}</tool_call>` directly in your assistant text response.\n' +
         '   - To invoke a Causyne host tool, write `<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>` directly in your assistant text response with NO native function call in that step; Causyne will execute the host tool and return the result on the next turn.\n' +
         '2. WORKSPACE PATH BOUNDARY (NO /tmp):\n' +
-        '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.'
+        '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.\n\n' +
+        '[Personalization Directive]\nStrictly honor any Project Personalization (`.causyne/personalization.md`) and workspace instructions included in system context as a high-priority binding contract for this project (subordinate only to safety and sandbox boundaries).'
       );
     }
 

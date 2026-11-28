@@ -1,11 +1,12 @@
 /**
- * Causyne Agent — Hierarchical Project Instructions Loader (Phase C-Core)
+ * Causyne Agent — Hierarchical Project Instructions & Personalization Loader
  *
- * Discovers and merges repository instruction files in deterministic precedence:
- *   1. User global `~/.causyne/CAUSYNE.md` (if present)
+ * Discovers and merges instruction files in deterministic precedence:
+ *   1. User global `~/.causyne/CAUSYNE.md` (and `~/.causyne/AGENTS.md` if distinct)
  *   2. Repository/workspace root down to active subdirectory:
- *      `CAUSYNE.md`, `AGENTS.md`, `CLAUDE.md`
+ *      `CAUSYNE.md`, `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`
  *   3. Scoped rule files under `.causyne/rules/*.md` (lexicographical order)
+ *   4. Per-project Personalization under `.causyne/personalization.md` (highest project authority)
  *
  * Security invariants:
  *   - Refuses symlinks and non-regular files (`lstatSync`).
@@ -24,7 +25,7 @@ import { createIgnoreMatcher, parseIgnoreContent } from './ignoreRules.js';
 
 export interface ProjectInstructionEntry {
   sourcePath: string;
-  scope: 'global' | 'workspace' | 'rule';
+  scope: 'global' | 'workspace' | 'rule' | 'personalization';
   bytes: number;
   truncated: boolean;
   content: string;
@@ -49,7 +50,7 @@ const MAX_TOTAL_INSTRUCTION_CHARS = 32_768;
 const MAX_RULE_FILES = 24;
 const MAX_INCLUDE_DEPTH = 3;
 const MAX_INCLUDES_PER_FILE = 8;
-const INSTRUCTION_FILENAMES = ['CAUSYNE.md', 'AGENTS.md', 'CLAUDE.md'] as const;
+const INSTRUCTION_FILENAMES = ['CAUSYNE.md', 'AGENTS.override.md', 'AGENTS.md', 'CLAUDE.md'] as const;
 
 function parseRuleFrontmatter(raw: string): { globs: string[]; body: string } {
   const normalized = raw.replace(/\r\n/g, '\n');
@@ -247,7 +248,7 @@ export function loadProjectInstructions(
 
   const tryAdd = (
     candidatePath: string,
-    scope: 'global' | 'workspace' | 'rule',
+    scope: 'global' | 'workspace' | 'rule' | 'personalization',
     includeBoundary: string | null
   ): void => {
     const resolved = path.resolve(candidatePath);
@@ -294,7 +295,9 @@ export function loadProjectInstructions(
   const homeDir = env.CAUSYNE_HOME && String(env.CAUSYNE_HOME).trim()
     ? path.resolve(String(env.CAUSYNE_HOME).trim())
     : causyneHome();
-  tryAdd(path.join(homeDir, 'CAUSYNE.md'), 'global', nativeRealpath(homeDir));
+  const realHomeDir = nativeRealpath(homeDir);
+  tryAdd(path.join(homeDir, 'CAUSYNE.md'), 'global', realHomeDir);
+  tryAdd(path.join(homeDir, 'AGENTS.md'), 'global', realHomeDir);
 
   // 2. Hierarchical repo root -> active workspace directory
   const dirs = repoRoot ? directoryChain(repoRoot, resolvedWs) : [resolvedWs];
@@ -316,6 +319,14 @@ export function loadProjectInstructions(
         }
       }
     } catch { /* directory absent */ }
+    // 4. Per-project Personalization (`.causyne/personalization.md`) — highest project priority
+    const causyneDir = path.join(dir, '.causyne');
+    try {
+      const dirStat = fs.lstatSync(causyneDir);
+      if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
+        tryAdd(path.join(causyneDir, 'personalization.md'), 'personalization', boundaryRoot);
+      }
+    } catch { /* directory absent */ }
   }
 
   return {
@@ -333,10 +344,18 @@ export function formatProjectInstructionsPrompt(loaded: LoadedProjectInstruction
     const rel = path.relative(loaded.workspaceRoot, entry.sourcePath);
     const label = entry.scope === 'global'
       ? `~/.causyne/${path.basename(entry.sourcePath)}`
-      : (rel && !rel.startsWith('..') ? rel : entry.sourcePath);
+      : (rel && !rel.startsWith('..') ? rel.replace(/\\/g, '/') : entry.sourcePath);
+    if (entry.scope === 'personalization') {
+      return `## PROJECT PERSONALIZATION — HIGH-PRIORITY BINDING CONTRACT (${safeDisplay(label)})\n${entry.content}`;
+    }
     return `## Project Rules (${entry.scope}: ${safeDisplay(label)})\n${entry.content}`;
   });
-  return `\n\n# WORKSPACE PROJECT INSTRUCTIONS (loaded deterministically from repository rules — safety boundaries and sandbox rules still take precedence)\n\n${blocks.join('\n\n')}`;
+  return [
+    '\n\n# PROJECT PERSONALIZATION & WORKSPACE INSTRUCTIONS — TREAT AS HIGH-PRIORITY BINDING CONTRACT',
+    'IMPORTANT: The developer explicitly authored these per-project Personalization and Workspace Instructions to define their project vision, mission, engineering standards, communication preferences, and non-negotiable conventions. Treat them as a BIG DEAL and strictly obey every directive below across all responses, edits, plans, and verifications—overriding generic habits whenever they do not conflict with Causyne\'s Absolute Ethical Safety Net or active permission/sandbox boundaries. Per-project Personalization (`.causyne/personalization.md`) takes highest precedence for this workspace.',
+    '',
+    blocks.join('\n\n')
+  ].join('\n');
 }
 
 export function formatProjectRulesReport(workspaceDir: string = process.cwd(), env: NodeJS.ProcessEnv = process.env): string {
@@ -345,8 +364,8 @@ export function formatProjectRulesReport(workspaceDir: string = process.cwd(), e
     return [
       'Project Instructions & Rules',
       '  Status : none loaded',
-      `  Lookup : CAUSYNE.md, AGENTS.md, CLAUDE.md, .causyne/rules/*.md`,
-      '  Tip    : Run /init or create CAUSYNE.md in your repository root.'
+      `  Lookup : .causyne/personalization.md, CAUSYNE.md, AGENTS.override.md, AGENTS.md, CLAUDE.md, .causyne/rules/*.md`,
+      '  Tip    : Run /personalization set "<instructions>" or /init to create project rules.'
     ].join('\n');
   }
   const lines = [

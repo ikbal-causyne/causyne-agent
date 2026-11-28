@@ -105,6 +105,71 @@ export function clearMemory(): void {
   }
 }
 
+function canonicalWorkspaceKey(workspaceRoot: string): string {
+  const resolved = path.resolve(workspaceRoot);
+  let canonical = resolved;
+  try {
+    canonical = typeof fs.realpathSync.native === 'function'
+      ? fs.realpathSync.native(resolved)
+      : fs.realpathSync(resolved);
+  } catch {
+    canonical = resolved;
+  }
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
+
+export function clearMemoryForWorkspace(workspaceRoot: string): number {
+  try {
+    const resolvedWs = path.resolve(workspaceRoot);
+    const targetKey = canonicalWorkspaceKey(workspaceRoot);
+    const mem = getMemory();
+    const entries = mem.entries || [];
+    const removedTexts = new Set<string>();
+    const keptEntries = entries.filter((entry) => {
+      if (entry.workspace && canonicalWorkspaceKey(entry.workspace) === targetKey) {
+        removedTexts.add(entry.text);
+        return false;
+      }
+      return true;
+    });
+    const stillReferenced = new Set(keptEntries.map((e) => e.text));
+    const keptFacts = mem.facts.filter((fact) => {
+      if (removedTexts.has(fact) && !stillReferenced.has(fact)) return false;
+      if (fact.includes(resolvedWs) || fact.includes(targetKey)) {
+        removedTexts.add(fact);
+        return false;
+      }
+      return true;
+    });
+    const removedCount = Math.max(mem.facts.length - keptFacts.length, entries.length - keptEntries.length);
+    if (removedCount > 0) {
+      saveMemory({ facts: keptFacts, entries: keptEntries });
+    }
+    return removedCount;
+  } catch (e: unknown) {
+    logMemoryError('clear-workspace', e);
+    return 0;
+  }
+}
+
+export function getMemoryStats(workspaceRoot?: string): { projectFacts: number; totalFacts: number } {
+  const mem = getMemory();
+  const totalFacts = mem.facts.length;
+  if (!workspaceRoot) return { projectFacts: totalFacts, totalFacts };
+  const resolvedWs = path.resolve(workspaceRoot);
+  const targetKey = canonicalWorkspaceKey(workspaceRoot);
+  const matchingTexts = new Set<string>();
+  for (const entry of mem.entries || []) {
+    if (entry.workspace && canonicalWorkspaceKey(entry.workspace) === targetKey) {
+      matchingTexts.add(entry.text);
+    }
+  }
+  for (const fact of mem.facts) {
+    if (fact.includes(resolvedWs) || fact.includes(targetKey)) matchingTexts.add(fact);
+  }
+  return { projectFacts: matchingTexts.size, totalFacts };
+}
+
 export function getMemoryContextString(options?: string | FormatMemoryOptions): string {
   const mem = getMemory();
   return formatMemoryContext(mem, options);

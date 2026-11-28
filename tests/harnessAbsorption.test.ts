@@ -57,18 +57,43 @@ describe('Causyne Harness Absorption Capabilities', () => {
       const session = ptyTerminalManager.openSession({
         workspaceRoot: tmp,
         origin: 'agent',
-        name: 'test-shell'
+        name: 'test-shell',
+        ...(process.platform !== 'win32' && fs.existsSync('/bin/sh') ? { shell: '/bin/sh' } : {})
       });
       assert.equal(session.origin, 'agent');
       assert.equal(session.control, 'agent');
 
-      const res = await ptyTerminalManager.sendAndWait(session.id, 'echo CAUSYNE_PTY_OK', {
-        timeoutMs: 8000,
-        idleMs: 350,
+      let rawBuf = '';
+      const unsubRaw = ptyTerminalManager.subscribe(session.id, (ev) => {
+        if ((ev.type === 'output' || ev.type === 'snapshot') && typeof ev.rawData === 'string') {
+          rawBuf += ev.rawData;
+        }
+      }, true);
+
+      const usePosixAnsiProbe = process.platform !== 'win32' && session.transport === 'pty';
+      const cmd = usePosixAnsiProbe
+        ? "printf '\\033[32mCAUSYNE_PTY_OK\\033[0m\\n'"
+        : 'echo CAUSYNE_PTY_OK';
+      const res = await ptyTerminalManager.sendAndWait(session.id, cmd, {
+        timeoutMs: 10000,
+        idleMs: 700,
         actor: 'agent'
       });
+      if (usePosixAnsiProbe && !rawBuf.includes('\x1b[32m')) {
+        const deadline = Date.now() + 4000;
+        while (!rawBuf.includes('\x1b[32m') && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 80));
+        }
+      }
+      unsubRaw();
       assert.equal(res.ok, true);
       assert.match(res.output, /CAUSYNE_PTY_OK/);
+      if (usePosixAnsiProbe) {
+        assert.ok(
+          rawBuf.includes('\x1b[32m') && rawBuf.includes('CAUSYNE_PTY_OK'),
+          `Expected rawData stream to preserve ANSI color escapes for xterm.js, got: ${JSON.stringify(rawBuf.slice(-200))}`
+        );
+      }
 
       // Simulate user keystroke taking atomic control
       const userWrite = ptyTerminalManager.writeInput(session.id, '\n', { actor: 'user', typed: true });
@@ -349,14 +374,53 @@ describe('Causyne Harness Absorption Capabilities', () => {
       assert.match(html, /Workspace files/);
       assert.match(html, /New terminal/);
       assert.match(html, /More tools/);
+      assert.match(html, /id="studio-tabs"/);
       assert.match(html, /id="studio-split-btn"/);
+      assert.match(html, /id="studio-split-divider"/);
+      assert.match(html, /id="term-viewport" class="term-screen"/);
+      assert.match(html, /id="browser-close-btn"/);
+      assert.match(html, /\/assets\/vendor\/xterm\.css/);
+      assert.match(html, /\/assets\/vendor\/xterm\.js/);
+      assert.match(html, /\/assets\/vendor\/addon-fit\.js/);
+      assert.doesNotMatch(html, /id="term-input"/);
+      assert.doesNotMatch(html, /id="term-send-btn"/);
 
-      for (const mod of ['studioLayout.js', 'studioStart.js', 'terminalPanel.js']) {
+      for (const mod of ['studioLayout.js', 'studioStart.js', 'terminalTheme.js', 'terminalPanel.js']) {
         const assetRes = await fetch(`${handle.origin}/assets/client/${mod}`);
         assert.equal(assetRes.status, 200, `Expected 200 for ${mod}`);
       }
+      for (const vendor of ['xterm.css', 'xterm.js', 'addon-fit.js']) {
+        const vendorRes = await fetch(`${handle.origin}/assets/vendor/${vendor}`);
+        assert.equal(vendorRes.status, 200, `Expected 200 for vendor ${vendor}`);
+      }
+
+      // Verify relative, POSIX file://, and Windows file:///C:/ workspace file links + scheme/traversal blocking
+      const { parseWorkspaceFileHref } = await import('../src/web/client/validators.js');
+      const relInfo = parseWorkspaceFileHref('package.json#L1-L5', '/Users/dev/proj');
+      assert.equal(relInfo?.relPath, 'package.json');
+      assert.equal(relInfo?.lineBadge, ':1-5');
+      const dotRel = parseWorkspaceFileHref('./src/web/client/markdown.ts', '/Users/dev/proj');
+      assert.equal(dotRel?.relPath, 'src/web/client/markdown.ts');
+      const winInfo = parseWorkspaceFileHref('file:///C:/Users/dev/proj/src/index.ts#L12', 'C:\\Users\\dev\\proj');
+      assert.equal(winInfo?.relPath, 'src/index.ts');
+      assert.equal(winInfo?.lineBadge, ':12');
+      assert.equal(parseWorkspaceFileHref('../secret.env', '/Users/dev/proj'), null);
+      assert.equal(parseWorkspaceFileHref('javascript:alert(1)', '/Users/dev/proj'), null);
+      assert.equal(parseWorkspaceFileHref('data:text/html,<h1>x</h1>', '/Users/dev/proj'), null);
+      assert.equal(parseWorkspaceFileHref('#heading-anchor', '/Users/dev/proj'), null);
 
       const headers = { Authorization: `Bearer ${handle.token}`, 'Content-Type': 'application/json' };
+      // Viewport sync while browser is inactive must not auto-spawn a browser
+      const vpRes = await fetch(`${handle.origin}/api/browser/action`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'viewport', width: 640, height: 420 })
+      });
+      assert.equal(vpRes.status, 200);
+      const vpJson = await vpRes.json() as { ok: boolean; active: boolean };
+      assert.equal(vpJson.ok, true);
+      assert.equal(vpJson.active, false);
+
       const shellsRes = await fetch(`${handle.origin}/api/terminal/sessions`, { headers });
       assert.equal(shellsRes.status, 200);
       const shellsJson = await shellsRes.json() as { ok: boolean; shells: unknown[] };

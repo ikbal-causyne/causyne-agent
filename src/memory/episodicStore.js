@@ -642,17 +642,57 @@ export class EpisodicMemoryStore {
             return 0;
         }
     }
+    clearProject(workspace) {
+        const store = this.ensureLoaded();
+        const project = projectFromWorkspace(workspace);
+        const canonical = (p) => {
+            const r = path.resolve(p);
+            try {
+                const real = typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(r) : fs.realpathSync(r);
+                return process.platform === 'win32' ? real.toLowerCase() : real;
+            }
+            catch {
+                return process.platform === 'win32' ? r.toLowerCase() : r;
+            }
+        };
+        const targetWs = canonical(workspace);
+        const beforeObs = store.observations.length;
+        const beforeSum = store.summaries.length;
+        store.observations = store.observations.filter((o) => o.project !== project && (!o.workspace || canonical(o.workspace) !== targetWs));
+        store.summaries = store.summaries.filter((s) => s.project !== project && (!s.workspace || canonical(s.workspace) !== targetWs));
+        const observationsRemoved = beforeObs - store.observations.length;
+        const summariesRemoved = beforeSum - store.summaries.length;
+        if (observationsRemoved > 0 || summariesRemoved > 0) {
+            this.save();
+        }
+        return { observationsRemoved, summariesRemoved };
+    }
+    clearAll() {
+        const store = this.ensureLoaded();
+        const observationsRemoved = store.observations.length;
+        const summariesRemoved = store.summaries.length;
+        store.observations = [];
+        store.summaries = [];
+        if (observationsRemoved > 0 || summariesRemoved > 0) {
+            this.save();
+        }
+        return { observationsRemoved, summariesRemoved };
+    }
     getStats(workspace) {
         const store = this.ensureLoaded();
         const project = workspace ? projectFromWorkspace(workspace) : '';
         const projectObservations = project
             ? store.observations.filter((o) => o.project === project).length
             : store.observations.length;
+        const projectSummaries = project
+            ? store.summaries.filter((s) => s.project === project).length
+            : store.summaries.length;
         const ext = this.detectExternalMemoryStore();
         return {
             totalObservations: store.observations.length,
             totalSummaries: store.summaries.length,
             projectObservations,
+            projectSummaries,
             externalStoreAvailable: ext.available,
             externalStorePath: ext.dbPath
         };

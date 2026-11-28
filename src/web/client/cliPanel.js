@@ -3,9 +3,9 @@ import { apiUrl, authHeaders, scrollToBottom, setStageMode, state } from './stat
 import { openStudio } from './studioShell.js';
 import { openInCanvas } from './filesAndCanvas.js';
 const QUICK_CLI_COMMANDS = [
-    '/status', '/doctor', '/map', '/rules', '/checkpoints', '/undo',
-    '/worktree list', '/pr', '/tasks', '/mcp', '/skills', '/peers',
-    '/plugins', '/slop', '/policy', '/audit', '/eval'
+    '/status', '/doctor', '/map', '/personalization', '/rules', '/memory status',
+    '/checkpoints', '/undo', '/worktree list', '/pr', '/tasks', '/mcp',
+    '/skills', '/peers', '/plugins', '/slop', '/policy', '/audit', '/eval'
 ];
 let callbacks = {
     startFreshChat: async () => { },

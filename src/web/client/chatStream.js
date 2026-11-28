@@ -1,7 +1,8 @@
 import { announceStatus, dom } from './dom.js';
 import { apiUrl, authHeaders, setLiveness, state, syncUsagePill, updateComposerMetrics } from './state.js';
-import { openStudio } from './studioShell.js';
+import { isStudioTabVisible, openStudio } from './studioShell.js';
 import { refreshLiveBrowserState, setBrowserEngine } from './browserPanel.js';
+import { loadTerminalSessions } from './terminalPanel.js';
 import { loadFiles } from './filesAndCanvas.js';
 import { loadDiff, syncDiffControlsUi } from './diffPanel.js';
 import { appendUserTurn, createAssistantTurn } from './turnView.js';
@@ -100,9 +101,14 @@ export async function consumeNdjsonStream(res, assistant, runSeq, promptForRetry
             }
             else if (ev.type === 'step_start' || ev.type === 'tool_start') {
                 assistant.addStepStart(ev);
-                if (String(ev.tool || '').toLowerCase().includes('browser')) {
+                const tStartLow = String(ev.tool || '').toLowerCase();
+                if (tStartLow.includes('browser')) {
                     openStudio('browser');
                     setBrowserEngine('agent');
+                }
+                else if (tStartLow === 'terminal_pty' || tStartLow === 'terminal.pty') {
+                    openStudio('terminal');
+                    void loadTerminalSessions();
                 }
             }
             else if (ev.type === 'step_complete' || ev.type === 'tool_result') {
@@ -111,10 +117,16 @@ export async function consumeNdjsonStream(res, assistant, runSeq, promptForRetry
                 if (tLow.includes('browser')) {
                     void refreshLiveBrowserState(false);
                 }
-                else if (dom.appEl.classList.contains('studio-open')
-                    && state.studioTab === 'diff'
-                    && /(write|edit|patch|delete|move|forge)/.test(tLow)) {
-                    void loadDiff();
+                else if (tLow === 'terminal_pty' || tLow === 'terminal.pty') {
+                    void loadTerminalSessions();
+                }
+                else if (/(write|edit|patch|delete|move|forge)/.test(tLow)) {
+                    if (dom.appEl.classList.contains('studio-open') && isStudioTabVisible('diff')) {
+                        void loadDiff();
+                    }
+                    if (dom.appEl.classList.contains('studio-open') && isStudioTabVisible('files')) {
+                        void loadFiles(state.currentDir, dom.fileFilterEl.value || '');
+                    }
                 }
             }
             else if (ev.type === 'step_error') {
@@ -122,7 +134,7 @@ export async function consumeNdjsonStream(res, assistant, runSeq, promptForRetry
             }
             else if (ev.type === 'code_progress') {
                 assistant.upsertCodeProgress(ev);
-                if (ev.phase === 'done' && dom.appEl.classList.contains('studio-open') && state.studioTab === 'diff') {
+                if (ev.phase === 'done' && dom.appEl.classList.contains('studio-open') && isStudioTabVisible('diff')) {
                     void loadDiff();
                 }
             }

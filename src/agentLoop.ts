@@ -75,6 +75,7 @@ import {
   selectNextZeroCostRoute
 } from './zeroCostFailover.js';
 import { formatProjectInstructionsPrompt, loadProjectInstructions } from './projectInstructions.js';
+import { isExternalToolAssistedToolName, resolveEffectiveMemoryPolicy } from './personalization.js';
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
@@ -247,6 +248,11 @@ const SYSTEM_PROMPT = `You are Causyne Agent, an autonomous local AI agent. Your
 ${PEER_COLLABORATION_POLICY}
 
 ${AGENT_USER_POLICY}
+
+# Personalization & Project Instructions (HIGH-PRIORITY DIRECTIVE)
+- **Treat Project Personalization as a Big Deal**: Developers configure per-project Personalization (\`.causyne/personalization.md\`), repository rules (\`CAUSYNE.md\`, \`AGENTS.md\`, \`.causyne/rules/*.md\`), and global instructions (\`~/.causyne/CAUSYNE.md\`) to encode their project's vision, mission, architectural standards, coding taste, and working comfort.
+- **Strict Obedience Under Core Safety**: Whenever Personalization or Project Instructions are provided in this session, treat them as a **binding high-priority operational contract**. Actively honor every detail—communication style, language, conventions, constraints, and engineering rules—over generic habits or defaults. Only Causyne's Absolute Ethical Safety Net, active permission preset, and workspace/sandbox security boundaries supersede Personalization.
+- **Per-Project Precedence**: Project-scoped Personalization (\`.causyne/personalization.md\`) and repository rules apply specifically to the active project and take precedence over general global preferences if they differ.
 
 # Operational Guidelines & Engineering Discipline
 - **Language & Communication**: Communicate clearly in the user's language by default unless repository instructions (such as \`AGENTS.md\` or \`CAUSYNE.md\`) specify a required language.
@@ -664,6 +670,7 @@ export class AgentLoop {
     // be recomputed on every single step (cortex retrieval, skills index,
     // design detection, workspace domain scan).
     this.staticContext = null;
+    this._memoryPollutedByExternalTools = false;
     this.vfeTracker = new VFETracker();
     this._lessonSimilarity = 0;
     this._paradigmShiftPending = false;
@@ -960,7 +967,8 @@ export class AgentLoop {
   async buildStaticContext() {
     let lessonsLearned = '';
     this._lessonSimilarity = 0;
-    const cortexEnabled = Boolean(this.config?.cortex?.enabled);
+    const startupMemoryPolicy = resolveEffectiveMemoryPolicy(this.workspaceRoot);
+    const cortexEnabled = Boolean(this.config?.cortex?.enabled) && startupMemoryPolicy.enabled;
     if (cortexEnabled && this.currentTaskPrompt && isSearchablePrompt(this.currentTaskPrompt)) {
       try {
         const matches = await cortexDb.search(this.currentTaskPrompt, 2, { workspace: this.workspaceRoot });
@@ -1027,10 +1035,12 @@ export class AgentLoop {
     }
 
     let episodicContext = '';
-    try {
-      episodicContext = episodicStore.buildStartupEpisodicContext(this.workspaceRoot);
-    } catch (e: any) {
-      this.debugLog(`episodic context build skipped: ${e.message}`);
+    if (startupMemoryPolicy.enabled) {
+      try {
+        episodicContext = episodicStore.buildStartupEpisodicContext(this.workspaceRoot);
+      } catch (e: any) {
+        this.debugLog(`episodic context build skipped: ${e.message}`);
+      }
     }
 
     let projectInstructions = '';
@@ -1043,7 +1053,10 @@ export class AgentLoop {
     return { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint, episodicContext, projectInstructions };
   }
 
-  
+  isMemoryPollutedByExternalTools(): boolean {
+    return Boolean(this._memoryPollutedByExternalTools);
+  }
+
   rearmAbortController() {
     this.abortController = new AbortController();
   }
@@ -1941,6 +1954,7 @@ export class AgentLoop {
     this.slopReviewAttempts = 0;
     this.slopLastAuditHash = '';
     this.staticContext = null;
+    this._memoryPollutedByExternalTools = false;
     // Plan cache: the procedure THIS task follows, and the template (if any)
     // that was offered to it. Both reset per task — a plan is a property of one
     // request, not of the session.
@@ -2495,7 +2509,10 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           isVisualOrWebTask ? WEB_VERIFICATION_PROMPT : ''
         ].join('');
         const providerPrompt = `${baseProviderPrompt}${sensoryAwareness}${domainPrompts}`;
-        const memoryContext = getMemoryContextString({ workspaceRoot: this.workspaceRoot });
+        const turnMemoryPolicy = resolveEffectiveMemoryPolicy(this.workspaceRoot);
+        const memoryContext = turnMemoryPolicy.enabled
+          ? getMemoryContextString({ workspaceRoot: this.workspaceRoot })
+          : '';
 
         // --- PER-TASK STATIC CONTEXT (computed once, not once per step) ---
         // Cortex retrieval, design detection, creative-pattern lookup and the
@@ -2953,15 +2970,21 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                 ...(isFailed ? { error: action.detail || `${action.name} failed` } : {})
               };
               coldObserver.recordToolOutcome(this.taskId, action.name, actionArgs, actionOutcome);
+              if (isExternalToolAssistedToolName(action.name)) {
+                this._memoryPollutedByExternalTools = true;
+              }
               try {
-                const compiledObs = compileToolObservation({
-                  taskId: this.taskId,
-                  workspace: this.workspaceRoot,
-                  toolName: action.name,
-                  args: actionArgs,
-                  result: actionOutcome
-                });
-                if (compiledObs) episodicStore.recordObservation(compiledObs);
+                const memPolicy = resolveEffectiveMemoryPolicy(this.workspaceRoot);
+                if (memPolicy.enabled && (memPolicy.allowToolAssisted || !this._memoryPollutedByExternalTools)) {
+                  const compiledObs = compileToolObservation({
+                    taskId: this.taskId,
+                    workspace: this.workspaceRoot,
+                    toolName: action.name,
+                    args: actionArgs,
+                    result: actionOutcome
+                  });
+                  if (compiledObs) episodicStore.recordObservation(compiledObs);
+                }
               } catch { /* never block peer action on episodic recording */ }
               const recovery = this.timeMachine.observe(
                 action.name, actionArgs, actionOutcome, coldObserver.getToolOutcomes(this.taskId)
@@ -4185,9 +4208,15 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           }
 
           try {
+            const memPolicy = resolveEffectiveMemoryPolicy(this.workspaceRoot);
             const reqText = String(this.currentTaskPrompt || this.userPrompt || '').trim();
             const completedText = String(response.content || 'Completed task execution.').replace(/\s+/g, ' ').trim();
-            if (reqText && (this.stepsCompleted > 0 || completedNativeActionIds.size > 0)) {
+            if (
+              memPolicy.enabled
+              && (memPolicy.allowToolAssisted || !this._memoryPollutedByExternalTools)
+              && reqText
+              && (this.stepsCompleted > 0 || completedNativeActionIds.size > 0)
+            ) {
               episodicStore.recordSessionSummary({
                 taskId: this.taskId,
                 workspace: this.workspaceRoot,
@@ -4915,15 +4944,21 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
             ? { success: true, _is_image_marker: true, visionDelivered: imageCanReachModel, filename: result.filename, mimeType: result.mimeType }
             : result;
           coldObserver.recordToolOutcome(this.taskId, functionName, args, observedResult);
+          if (isExternalToolAssistedToolName(functionName)) {
+            this._memoryPollutedByExternalTools = true;
+          }
           try {
-            const compiledObs = compileToolObservation({
-              taskId: this.taskId,
-              workspace: this.workspaceRoot,
-              toolName: functionName,
-              args: args || {},
-              result: observedResult && typeof observedResult === 'object' ? observedResult : { success: true }
-            });
-            if (compiledObs) episodicStore.recordObservation(compiledObs);
+            const memPolicy = resolveEffectiveMemoryPolicy(this.workspaceRoot);
+            if (memPolicy.enabled && (memPolicy.allowToolAssisted || !this._memoryPollutedByExternalTools)) {
+              const compiledObs = compileToolObservation({
+                taskId: this.taskId,
+                workspace: this.workspaceRoot,
+                toolName: functionName,
+                args: args || {},
+                result: observedResult && typeof observedResult === 'object' ? observedResult : { success: true }
+              });
+              if (compiledObs) episodicStore.recordObservation(compiledObs);
+            }
           } catch { /* never block tool execution on episodic recording */ }
           const recovery = this.timeMachine.observe(
             functionName, args, observedResult, coldObserver.getToolOutcomes(this.taskId)

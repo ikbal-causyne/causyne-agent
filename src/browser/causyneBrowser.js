@@ -1488,6 +1488,37 @@ export class CausyneBrowser {
     async captureLiveFrame(options = {}) {
         return this.enqueueOperation(() => this.captureLiveFrameUnlocked(options));
     }
+    async closeLiveSession() {
+        return this.enqueueOperation(async () => {
+            await this.close();
+            return this.captureLiveFrameUnlocked({ ensureStarted: false });
+        });
+    }
+    async closeLiveTab(tabId) {
+        return this.enqueueOperation(async () => {
+            if (!this.isSessionHealthy()) {
+                return this.captureLiveFrameUnlocked({ ensureStarted: false });
+            }
+            const target = this.tabs.get(tabId);
+            if (target) {
+                if (!target.page.isClosed()) {
+                    await target.page.close().catch(() => { });
+                }
+                this.tabs.delete(tabId);
+                if (this.activeTabId === tabId)
+                    this.activeTabId = null;
+            }
+            const liveTabs = [...this.tabs.values()].filter((t) => !t.page.isClosed() && !t.crashed);
+            if (liveTabs.length === 0) {
+                await this.close();
+                return this.captureLiveFrameUnlocked({ ensureStarted: false });
+            }
+            if (!this.activeTabId || !this.tabs.has(this.activeTabId)) {
+                this.activeTabId = liveTabs[liveTabs.length - 1].id;
+            }
+            return this.captureLiveFrameUnlocked({ ensureStarted: false });
+        });
+    }
     async captureLiveFrameUnlocked(options = {}) {
         const status = this.getRuntimeStatus();
         if (!this.isSessionHealthy()) {

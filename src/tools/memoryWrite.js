@@ -1,6 +1,7 @@
 import { getMemory, saveMemory } from '../memory.js';
 import { recordScopedFact } from '../memory/scopedFacts.js';
 import { cortexDb } from '../cortex/vectorDb.js';
+import { resolveEffectiveMemoryPolicy } from '../personalization.js';
 const MAX_FACTS = 100;
 export const memoryWrite = {
     schema: {
@@ -54,8 +55,21 @@ export const memoryWrite = {
             return { success: false, error: "Missing non-empty 'fact' or 'creativePattern' parameter." };
         }
         try {
-            const memory = getMemory();
             const workspace = dependencies?.parentLoop?.workspaceRoot || dependencies?.workspaceRoot;
+            const memPolicy = resolveEffectiveMemoryPolicy(workspace);
+            if (!memPolicy.enabled) {
+                return {
+                    success: false,
+                    error: 'Causyne memories are disabled in Personalization settings for this workspace/device. Enable memories to save facts.'
+                };
+            }
+            if (!memPolicy.allowToolAssisted && dependencies?.parentLoop?.isMemoryPollutedByExternalTools?.()) {
+                return {
+                    success: false,
+                    error: 'Saving memories from tool-assisted chats (MCP/web tools) is disabled in Personalization settings.'
+                };
+            }
+            const memory = getMemory();
             const { memory: updated, alreadyKnown } = recordScopedFact(memory, fact, {
                 workspace,
                 maxFacts: MAX_FACTS

@@ -1,7 +1,96 @@
 import { announceAlert, dom } from './dom.js';
 import { apiUrl, authHeaders, state } from './state.js';
 import { isHtmlOrSvgPath, parseLoopbackUrl } from './validators.js';
-import { closeAllPopovers, openStudio, positionPopover } from './studioShell.js';
+import { closeAllPopovers, isStudioTabVisible, openStudio, positionPopover, setStudioTabDynamicTitle } from './studioShell.js';
+let stageResizeObserver = null;
+let viewportSyncTimer = null;
+let lastRequestedViewportW = 0;
+let lastRequestedViewportH = 0;
+let lastRenderedBrowserTabsSig = '';
+function extractDisplayLabel(title, url) {
+    const cleanTitle = (title || '').trim();
+    if (cleanTitle && cleanTitle.toLowerCase() !== 'about:blank')
+        return cleanTitle;
+    const cleanUrl = (url || '').trim();
+    if (!cleanUrl || cleanUrl === 'about:blank')
+        return null;
+    try {
+        const parsed = new URL(cleanUrl);
+        return parsed.hostname || cleanUrl;
+    }
+    catch {
+        return cleanUrl;
+    }
+}
+function measureStageViewport() {
+    const host = dom.browserStage || dom.liveViewportSurface;
+    if (!host)
+        return null;
+    const rect = host.getBoundingClientRect();
+    if (rect.width < 200 || rect.height < 180)
+        return null;
+    return {
+        width: Math.max(320, Math.min(2560, Math.round(rect.width))),
+        height: Math.max(240, Math.min(1440, Math.round(rect.height)))
+    };
+}
+function syncBrowserCloseButton() {
+    if (!dom.browserCloseBtn)
+        return;
+    const hasActive = state.browserEngine === 'agent'
+        ? state.liveBrowserActive
+        : state.browserMode !== 'empty';
+    dom.browserCloseBtn.style.display = hasActive ? 'inline-flex' : 'none';
+}
+function syncSandboxToggleButton() {
+    if (!dom.browserSandboxBtn)
+        return;
+    const isFrame = state.browserEngine === 'frame';
+    dom.browserSandboxBtn.style.display = isFrame ? 'inline-flex' : 'none';
+    dom.browserSandboxBtn.classList.toggle('active', isFrame && state.browserFrameStrictSandbox);
+    dom.browserSandboxBtn.setAttribute('aria-pressed', state.browserFrameStrictSandbox ? 'true' : 'false');
+    dom.browserSandboxBtn.title = state.browserFrameStrictSandbox
+        ? 'Strict frame sandbox (same-origin isolated)'
+        : 'Standard local preview sandbox (click for strict isolation)';
+}
+export function syncBrowserViewportToStage(immediate = false) {
+    if (state.browserEngine !== 'agent'
+        || !state.liveBrowserActive
+        || state.browserViewport !== 'desktop'
+        || !dom.appEl.classList.contains('studio-open')
+        || !isStudioTabVisible('browser')) {
+        return;
+    }
+    const measured = measureStageViewport();
+    if (!measured)
+        return;
+    const deltaW = Math.abs(measured.width - state.liveBrowserWidth);
+    const deltaH = Math.abs(measured.height - state.liveBrowserHeight);
+    if (deltaW < 14 && deltaH < 14)
+        return;
+    if (Math.abs(measured.width - lastRequestedViewportW) < 8
+        && Math.abs(measured.height - lastRequestedViewportH) < 8
+        && !immediate) {
+        return;
+    }
+    const dispatch = () => {
+        viewportSyncTimer = null;
+        if (!state.liveBrowserActive || state.browserEngine !== 'agent' || state.browserViewport !== 'desktop')
+            return;
+        const latest = measureStageViewport();
+        if (!latest)
+            return;
+        lastRequestedViewportW = latest.width;
+        lastRequestedViewportH = latest.height;
+        void runBrowserAction({ action: 'viewport', width: latest.width, height: latest.height });
+    };
+    if (viewportSyncTimer)
+        clearTimeout(viewportSyncTimer);
+    if (immediate)
+        dispatch();
+    else
+        viewportSyncTimer = setTimeout(dispatch, 140);
+}
 export function stopLiveBrowserStream() {
     if (state.liveStreamAbort) {
         try {
@@ -23,6 +112,7 @@ export function updateAgentBrowserBanner(activity) {
 export function applyLiveBrowserFrame(data) {
     if (!data)
         return;
+    const wasActive = state.liveBrowserActive;
     state.liveBrowserActive = Boolean(data.active);
     if (typeof data.visible === 'boolean')
         state.liveBrowserVisible = data.visible;
@@ -56,29 +146,64 @@ export function applyLiveBrowserFrame(data) {
     dom.browserNativeWinBtn.title = state.liveBrowserVisible ? 'Return browser to panel' : 'Open in desktop window';
     if (data.agentActivity)
         updateAgentBrowserBanner(data.agentActivity);
+    let activeTabTitle;
+    let activeTabUrl;
     if (Array.isArray(data.tabs)) {
-        dom.browserTabsEl.textContent = '';
         for (const tab of data.tabs) {
-            const pill = document.createElement('div');
-            pill.className = `btab${tab.active ? ' active' : ''}`;
-            const lbl = document.createElement('button');
-            lbl.type = 'button';
-            lbl.className = 'btab-label';
-            lbl.textContent = tab.title || tab.url || 'New tab';
-            lbl.addEventListener('click', () => { void runBrowserAction({ action: 'switchTab', tabId: tab.tabId }); });
-            const cls = document.createElement('button');
-            cls.type = 'button';
-            cls.className = 'btab-close';
-            cls.textContent = '×';
-            cls.addEventListener('click', () => { void runBrowserAction({ action: 'closeTab', tabId: tab.tabId }); });
-            pill.appendChild(lbl);
-            pill.appendChild(cls);
-            dom.browserTabsEl.appendChild(pill);
+            if (tab.active) {
+                activeTabTitle = tab.title;
+                activeTabUrl = tab.url;
+            }
         }
-        dom.browserTabsEl.appendChild(dom.browserNewTabBtn);
+        const tabsSig = data.tabs
+            .map((t) => `${t.tabId}\0${t.active ? '1' : '0'}\0${t.title || ''}\0${t.url || ''}`)
+            .join('\x01');
+        if (tabsSig !== lastRenderedBrowserTabsSig) {
+            lastRenderedBrowserTabsSig = tabsSig;
+            dom.browserTabsEl.textContent = '';
+            for (const tab of data.tabs) {
+                const pill = document.createElement('div');
+                pill.className = `btab${tab.active ? ' active' : ''}`;
+                pill.addEventListener('auxclick', (e) => {
+                    if (e.button === 1) {
+                        e.preventDefault();
+                        void runBrowserAction({ action: 'closeTab', tabId: tab.tabId });
+                    }
+                });
+                const lbl = document.createElement('button');
+                lbl.type = 'button';
+                lbl.className = 'btab-label';
+                lbl.textContent = tab.title || tab.url || 'New tab';
+                lbl.title = tab.title || tab.url || 'New tab';
+                lbl.addEventListener('click', () => { void runBrowserAction({ action: 'switchTab', tabId: tab.tabId }); });
+                const cls = document.createElement('button');
+                cls.type = 'button';
+                cls.className = 'btab-close';
+                cls.textContent = '×';
+                cls.title = 'Close tab';
+                cls.setAttribute('aria-label', `Close ${tab.title || 'tab'}`);
+                cls.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    void runBrowserAction({ action: 'closeTab', tabId: tab.tabId });
+                });
+                pill.appendChild(lbl);
+                pill.appendChild(cls);
+                dom.browserTabsEl.appendChild(pill);
+            }
+            dom.browserTabsEl.appendChild(dom.browserNewTabBtn);
+        }
     }
+    syncBrowserCloseButton();
     if (state.browserEngine !== 'agent')
         return;
+    if (state.liveBrowserActive) {
+        setStudioTabDynamicTitle('browser', extractDisplayLabel(activeTabTitle, activeTabUrl || data.url));
+    }
+    else {
+        setStudioTabDynamicTitle('browser', null);
+        if (document.activeElement !== dom.browserUrlInput)
+            dom.browserUrlInput.value = '';
+    }
     if (data.url && document.activeElement !== dom.browserUrlInput)
         dom.browserUrlInput.value = data.url;
     if (data.active && data.imageBase64) {
@@ -86,17 +211,22 @@ export function applyLiveBrowserFrame(data) {
         dom.browserFrame.style.display = 'none';
         dom.liveBrowserImg.src = `data:${data.mimeType || 'image/jpeg'};base64,${data.imageBase64}`;
         dom.liveBrowserImg.style.display = 'block';
+        if (!wasActive) {
+            requestAnimationFrame(() => syncBrowserViewportToStage(false));
+        }
     }
     else if (!data.active) {
         dom.liveBrowserImg.style.display = 'none';
         dom.browserAgentBanner.classList.remove('visible');
         dom.browserEmpty.style.display = 'flex';
+        lastRequestedViewportW = 0;
+        lastRequestedViewportH = 0;
     }
 }
 export function startLiveBrowserStream() {
     if (state.liveStreamAbort
         || !dom.appEl.classList.contains('studio-open')
-        || state.studioTab !== 'browser'
+        || !isStudioTabVisible('browser')
         || state.browserEngine !== 'agent') {
         return;
     }
@@ -181,6 +311,33 @@ export async function runBrowserAction(payload) {
     applyLiveBrowserFrame(data);
     return data;
 }
+export async function closeBrowserWorkspace() {
+    if (viewportSyncTimer) {
+        clearTimeout(viewportSyncTimer);
+        viewportSyncTimer = null;
+    }
+    if (state.browserEngine === 'agent') {
+        stopLiveBrowserStream();
+        lastRenderedBrowserTabsSig = '';
+        await runBrowserAction({ action: 'close' });
+        return;
+    }
+    state.browserMode = 'empty';
+    state.browserUrl = '';
+    state.browserSrcdoc = '';
+    frameNav.entries = [];
+    frameNav.index = -1;
+    frameNav.originUnknown = false;
+    frameNav.pendingRestoreUrl = null;
+    dom.browserFrame.removeAttribute('src');
+    dom.browserFrame.removeAttribute('srcdoc');
+    dom.browserFrame.style.display = 'none';
+    dom.browserEmpty.style.display = 'flex';
+    dom.browserUrlInput.value = '';
+    setStudioTabDynamicTitle('browser', null);
+    syncFrameNavIndicators();
+    syncBrowserCloseButton();
+}
 export function setBrowserEngine(engine) {
     state.browserEngine = engine === 'frame' ? 'frame' : 'agent';
     dom.bmodeAgentBtn.classList.toggle('active', state.browserEngine === 'agent');
@@ -189,6 +346,7 @@ export function setBrowserEngine(engine) {
     dom.browserNewTabBtn.style.display = isAgent ? 'inline-flex' : 'none';
     dom.browserNativeWinBtn.style.display = isAgent ? 'inline-flex' : 'none';
     dom.browserSyncToggleBtn.style.display = isAgent ? 'inline-flex' : 'none';
+    syncSandboxToggleButton();
     if (!isAgent) {
         dom.browserSyncDrawer.classList.remove('open');
         dom.browserSyncToggleBtn.classList.remove('active');
@@ -208,8 +366,10 @@ export function setBrowserEngine(engine) {
         loadPersistedFrameRestoreCandidate();
         dom.browserEmpty.style.display = hasFrame || Boolean(frameNav.pendingRestoreUrl) ? 'none' : 'flex';
         dom.browserFrame.style.display = hasFrame ? 'block' : 'none';
+        setStudioTabDynamicTitle('browser', hasFrame ? extractDisplayLabel(undefined, state.browserUrl || 'Preview') : null);
     }
     syncFrameNavIndicators();
+    syncBrowserCloseButton();
 }
 const FRAME_HISTORY_KEY = 'causyne/web/frameLastUrl/v1';
 const MAX_FRAME_HISTORY = 100;
@@ -261,6 +421,11 @@ function loadPersistedFrameRestoreCandidate() {
         // Ignore storage errors
     }
 }
+function frameSandboxAttr() {
+    return state.browserFrameStrictSandbox
+        ? 'allow-scripts allow-forms'
+        : 'allow-scripts allow-forms allow-same-origin';
+}
 function navigateFrameToIndex(nextIndex) {
     const url = frameNav.entries[nextIndex];
     if (!url)
@@ -276,10 +441,12 @@ function navigateFrameToIndex(nextIndex) {
     dom.browserEmpty.style.display = 'none';
     dom.browserFrame.style.display = 'block';
     dom.browserFrame.removeAttribute('srcdoc');
-    dom.browserFrame.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin');
+    dom.browserFrame.setAttribute('sandbox', frameSandboxAttr());
     dom.browserFrame.src = url;
     dom.browserOpenExtBtn.style.display = 'flex';
+    setStudioTabDynamicTitle('browser', extractDisplayLabel(undefined, url));
     syncFrameNavIndicators();
+    syncBrowserCloseButton();
 }
 export function openBrowserUrl(rawUrl) {
     const valid = parseLoopbackUrl(rawUrl);
@@ -331,6 +498,8 @@ export function openBrowserArtifact(title, htmlOrSvg) {
     dom.browserFrame.setAttribute('sandbox', 'allow-scripts');
     dom.browserFrame.srcdoc = wrapped;
     dom.browserOpenExtBtn.style.display = 'none';
+    setStudioTabDynamicTitle('browser', title || 'preview.html');
+    syncBrowserCloseButton();
 }
 async function sendLiveInput(payload) {
     if (!state.liveBrowserActive) {
@@ -428,7 +597,15 @@ async function importExplicitBrowserData() {
     dom.browserImportInput.value = '';
     dom.cdpSyncStatus.textContent = `Imported ${(data.importedUrls || []).length} URL(s), ${data.importedCookies || 0} cookie(s).`;
 }
+function stageSizePayload() {
+    if (state.browserViewport !== 'desktop')
+        return {};
+    const measured = measureStageViewport();
+    return measured ? { width: measured.width, height: measured.height } : {};
+}
 export function bindBrowserPanelEvents() {
+    syncBrowserCloseButton();
+    syncSandboxToggleButton();
     dom.browserMoreBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const wasOpen = dom.browserMorePopover.classList.contains('open');
@@ -438,11 +615,22 @@ export function bindBrowserPanelEvents() {
             positionPopover(dom.browserMorePopover, dom.browserMoreBtn, false);
         }
     });
+    dom.browserCloseBtn?.addEventListener('click', () => {
+        void closeBrowserWorkspace();
+    });
+    dom.browserSandboxBtn?.addEventListener('click', () => {
+        state.browserFrameStrictSandbox = !state.browserFrameStrictSandbox;
+        syncSandboxToggleButton();
+        if (state.browserEngine === 'frame' && state.browserMode === 'url' && state.browserUrl) {
+            dom.browserFrame.setAttribute('sandbox', frameSandboxAttr());
+            dom.browserFrame.src = state.browserUrl;
+        }
+    });
     dom.bmodeAgentBtn.addEventListener('click', () => { closeAllPopovers(); setBrowserEngine('agent'); });
     dom.bmodeFrameBtn.addEventListener('click', () => { closeAllPopovers(); setBrowserEngine('frame'); });
     dom.browserStartBtn.addEventListener('click', () => {
         setBrowserEngine('agent');
-        void runBrowserAction({ action: 'start' }).then(() => {
+        void runBrowserAction({ action: 'start', ...stageSizePayload() }).then(() => {
             startLiveBrowserStream();
             dom.liveViewportSurface.focus();
         });
@@ -462,7 +650,7 @@ export function bindBrowserPanelEvents() {
     });
     dom.browserCloseEngineBtn.addEventListener('click', () => {
         closeAllPopovers();
-        void runBrowserAction({ action: 'close' });
+        void closeBrowserWorkspace();
     });
     dom.browserHandoffBtn.addEventListener('click', () => {
         closeAllPopovers();
@@ -480,7 +668,9 @@ export function bindBrowserPanelEvents() {
     });
     dom.cdpScanBtn.addEventListener('click', () => { void scanLocalChromeTabs(); });
     dom.browserImportBtn.addEventListener('click', () => { void importExplicitBrowserData(); });
-    dom.browserNewTabBtn.addEventListener('click', () => { void runBrowserAction({ action: 'newTab' }); });
+    dom.browserNewTabBtn.addEventListener('click', () => {
+        void runBrowserAction({ action: 'newTab', ...stageSizePayload() }).then(() => startLiveBrowserStream());
+    });
     dom.browserBackBtn.addEventListener('click', () => {
         if (state.browserEngine === 'frame') {
             if (!frameNav.originUnknown && frameNav.index > 0)
@@ -527,7 +717,7 @@ export function bindBrowserPanelEvents() {
     const triggerNavigate = () => {
         const val = (dom.browserUrlInput.value || '').trim();
         if (state.browserEngine === 'agent') {
-            void runBrowserAction({ action: 'goto', url: val }).then(() => startLiveBrowserStream());
+            void runBrowserAction({ action: 'goto', url: val, ...stageSizePayload() }).then(() => startLiveBrowserStream());
         }
         else {
             openBrowserUrl(val);
@@ -539,6 +729,7 @@ export function bindBrowserPanelEvents() {
             triggerNavigate();
         }
     });
+    dom.browserGoBtn?.addEventListener('click', triggerNavigate);
     dom.browserReloadBtn.addEventListener('click', () => {
         if (state.browserEngine === 'agent') {
             void runBrowserAction({ action: 'reload' });
@@ -689,14 +880,26 @@ export function bindBrowserPanelEvents() {
             dom.browserFrame.classList.toggle('vp-tablet', vp === 'tablet');
             dom.browserFrame.classList.toggle('vp-mobile', vp === 'mobile');
             if (state.browserEngine === 'agent' && state.liveBrowserActive) {
-                const dims = vp === 'mobile'
-                    ? { width: 390, height: 844 }
-                    : vp === 'tablet'
-                        ? { width: 768, height: 900 }
-                        : { width: 1280, height: 800 };
-                void runBrowserAction({ action: 'viewport', width: dims.width, height: dims.height });
+                if (vp === 'desktop') {
+                    syncBrowserViewportToStage(true);
+                }
+                else {
+                    const dims = vp === 'mobile' ? { width: 390, height: 844 } : { width: 768, height: 900 };
+                    void runBrowserAction({ action: 'viewport', width: dims.width, height: dims.height });
+                }
             }
         });
     });
-    window.addEventListener('beforeunload', stopLiveBrowserStream);
+    if (dom.browserStage && typeof ResizeObserver !== 'undefined') {
+        stageResizeObserver = new ResizeObserver(() => {
+            syncBrowserViewportToStage(false);
+        });
+        stageResizeObserver.observe(dom.browserStage);
+    }
+    window.addEventListener('beforeunload', () => {
+        stopLiveBrowserStream();
+        stageResizeObserver?.disconnect();
+        if (viewportSyncTimer)
+            clearTimeout(viewportSyncTimer);
+    });
 }

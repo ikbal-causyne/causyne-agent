@@ -528,6 +528,8 @@ export class PtyTerminalManager {
             COLUMNS: String(cols),
             LINES: String(rows),
             CAUSYNE_TERMINAL: '1',
+            // Avoid noisy ~/.zsh_history lock warnings inside OS sandboxes while keeping in-memory history
+            ...(wrapped.sandboxed ? { HISTFILE: '' } : {}),
             // OSC 133;D marker for exact prompt-completion readiness in bash/zsh
             PROMPT_COMMAND: 'printf "\\033]133;D;%s\\007" "$?"'
         };
@@ -560,25 +562,31 @@ export class PtyTerminalManager {
             createdAt: now,
             lastActivityAt: now,
             scrollback: '',
+            rawScrollback: '',
             sanitizer: new TerminalSanitizer(),
             promptMarkerCount: 0,
             stdoutLineBuf: '',
             subscribers: new Set()
         };
         const appendOutput = (rawChunk) => {
+            if (!rawChunk)
+                return;
             const cleaned = session.sanitizer.process(rawChunk);
             if (cleaned.promptMarkers > 0) {
                 session.promptMarkerCount += cleaned.promptMarkers;
             }
-            if (!cleaned.text)
-                return;
-            const redacted = redactTextSecrets(cleaned.text);
-            session.scrollback = trimScrollback(session.scrollback + redacted);
+            const redactedRaw = redactTextSecrets(rawChunk, [], { sanitizeTerminal: false });
+            session.rawScrollback = trimScrollback(session.rawScrollback + redactedRaw);
+            const redactedClean = cleaned.text ? redactTextSecrets(cleaned.text) : '';
+            if (redactedClean) {
+                session.scrollback = trimScrollback(session.scrollback + redactedClean);
+            }
             session.lastActivityAt = Date.now();
             this.broadcast(session, {
                 type: 'output',
                 sessionId: session.id,
-                data: redacted,
+                data: redactedClean,
+                rawData: redactedRaw,
                 ts: session.lastActivityAt
             });
         };
@@ -594,6 +602,9 @@ export class PtyTerminalManager {
                             const msg = JSON.parse(line);
                             if (msg.t === 'ready' && typeof msg.pid === 'number') {
                                 session.childPid = msg.pid;
+                                if (msg.mode === 'pipe' || msg.mode === 'pty') {
+                                    session.transport = msg.mode;
+                                }
                             }
                             else if (msg.t === 'out' && typeof msg.b === 'string') {
                                 const decoded = Buffer.from(msg.b, 'base64').toString('utf8');
@@ -882,6 +893,7 @@ export class PtyTerminalManager {
                     type: 'snapshot',
                     sessionId: session.id,
                     data: session.scrollback,
+                    rawData: session.rawScrollback,
                     control: session.control,
                     status: session.status,
                     exitCode: session.exitCode,

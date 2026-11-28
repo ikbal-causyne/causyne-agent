@@ -36,11 +36,23 @@ export function extractLoopbackUrls(text) {
     }
     return found.slice(0, 3);
 }
+function normalizePathSlashes(raw) {
+    return raw.replace(/\\/g, '/');
+}
+function normalizeDrivePrefix(raw) {
+    // file:///C:/foo -> C:/foo (Windows compatibility alongside POSIX /Users/...)
+    const winFile = /^\/([a-zA-Z]:\/.*)$/.exec(raw);
+    return winFile?.[1] ? winFile[1] : raw;
+}
 export function parseWorkspaceFileHref(rawHref, workspaceRoot) {
     const trimmed = String(rawHref || '').trim();
-    if (!trimmed.toLowerCase().startsWith('file://'))
+    if (!trimmed || trimmed.startsWith('#'))
         return null;
-    let body = trimmed.slice(7);
+    const isFileScheme = trimmed.toLowerCase().startsWith('file://');
+    // Reject every non-file URI scheme (javascript:, data:, vbscript:, mailto:, http:, etc.)
+    if (!isFileScheme && /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed))
+        return null;
+    let body = isFileScheme ? trimmed.slice(7) : trimmed;
     let lineBadge = '';
     const hashIdx = body.indexOf('#');
     if (hashIdx >= 0) {
@@ -57,16 +69,45 @@ export function parseWorkspaceFileHref(rawHref, workspaceRoot) {
         body = decodeURIComponent(body);
     }
     catch { /* keep raw */ }
-    const wsRoot = String(workspaceRoot || '').replace(/\/+$/, '');
-    const normPrivate = (p) => p.replace(/^\/private(?=\/(?:var|tmp)(?:\/|$))/, '');
-    const bodyNorm = normPrivate(body);
-    const wsNorm = normPrivate(wsRoot);
-    let relPath = null;
-    if (wsNorm && bodyNorm.startsWith(`${wsNorm}/`)) {
-        relPath = bodyNorm.slice(wsNorm.length + 1);
+    // Reject control characters or NUL bytes
+    for (let i = 0; i < body.length; i += 1) {
+        const code = body.charCodeAt(i);
+        if (code < 0x20 || code === 0x7f)
+            return null;
     }
-    const display = relPath || body.split('/').slice(-2).join('/') || body;
-    return { fullPath: body, relPath, display, lineBadge };
+    const wsRoot = normalizePathSlashes(String(workspaceRoot || '')).replace(/\/+$/, '');
+    const normPrivate = (p) => p.replace(/^\/private(?=\/(?:var|tmp)(?:\/|$))/, '');
+    if (isFileScheme) {
+        const bodyClean = normalizeDrivePrefix(normalizePathSlashes(body));
+        const bodyNorm = normPrivate(bodyClean);
+        const wsNorm = normPrivate(wsRoot);
+        let relPath = null;
+        if (wsNorm) {
+            const isWin = /^[a-zA-Z]:\//.test(wsNorm);
+            const cmpBody = isWin ? bodyNorm.toLowerCase() : bodyNorm;
+            const cmpWs = isWin ? wsNorm.toLowerCase() : wsNorm;
+            if (cmpBody.startsWith(`${cmpWs}/`)) {
+                relPath = bodyNorm.slice(wsNorm.length + 1);
+            }
+        }
+        const display = relPath || bodyClean.split('/').slice(-2).join('/') || bodyClean;
+        return { fullPath: bodyClean, relPath, display, lineBadge };
+    }
+    // Safe relative workspace file link (e.g. "package.json", "./src/index.ts", "docs/guide.md#L12")
+    const relClean = normalizePathSlashes(body).replace(/^\.\//, '');
+    if (!relClean || relClean.startsWith('/') || relClean.endsWith('/'))
+        return null;
+    if (/^[a-zA-Z]:/.test(relClean))
+        return null;
+    const segments = relClean.split('/');
+    if (segments.some((seg) => !seg || seg === '.' || seg === '..'))
+        return null;
+    // Require a recognizable file name (has extension or dotfile/Makefile-style relative path)
+    const leaf = segments[segments.length - 1] || '';
+    if (!leaf.includes('.') && segments.length < 2)
+        return null;
+    const fullPath = wsRoot ? `${wsRoot}/${relClean}` : relClean;
+    return { fullPath, relPath: relClean, display: relClean, lineBadge };
 }
 export function isHtmlOrSvgPath(relPath) {
     const p = String(relPath || '').toLowerCase();

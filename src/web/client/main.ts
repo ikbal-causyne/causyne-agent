@@ -9,16 +9,17 @@ import {
 import { configureMarkdownCallbacks } from './markdown.js';
 import {
   bindStudioResizer,
+  bindStudioSplitDivider,
   closeAllPopovers,
   closeStudio,
   configureStudioTabHandlers,
   endStudioResize,
   isStudioResizing,
+  isStudioTabVisible,
   openStudio,
   positionPopover,
   restoreStudioLayoutPreference,
   setSecondaryStudioTab,
-  setStudioTab,
   swapStudioSplitPanes,
   toggleStudioMaximize,
   toggleStudioNav,
@@ -30,7 +31,10 @@ import {
 } from './studioStart.js';
 import {
   bindTerminalPanelEvents,
+  closeAllTerminalSessions,
   deactivateTerminalPanel,
+  fitActiveTerminal,
+  focusActiveTerminal,
   loadTerminalSessions,
   openNewTerminalSession
 } from './terminalPanel.js';
@@ -49,11 +53,13 @@ import {
 } from './diffPanel.js';
 import {
   bindBrowserPanelEvents,
+  closeBrowserWorkspace,
   openBrowserArtifact,
   openBrowserUrl,
   refreshLiveBrowserState,
   startLiveBrowserStream,
-  stopLiveBrowserStream
+  stopLiveBrowserStream,
+  syncBrowserViewportToStage
 } from './browserPanel.js';
 import {
   bindCliPanelEvents,
@@ -115,10 +121,23 @@ function wireModuleCallbacks(): void {
     onFilesTab: () => { void loadFiles(state.currentDir, dom.fileFilterEl.value || ''); },
     onDiffTab: () => { void loadDiff(); },
     onCliTab: () => { void loadCliOverview(); },
-    onTerminalActivate: () => { void loadTerminalSessions(); },
+    onTerminalActivate: () => {
+      void loadTerminalSessions().then(() => {
+        fitActiveTerminal();
+      });
+    },
     onTerminalDeactivate: deactivateTerminalPanel,
-    onBrowserActivate: () => { void refreshLiveBrowserState(false); startLiveBrowserStream(); },
-    onBrowserDeactivate: stopLiveBrowserStream
+    onTerminalClose: () => { void closeAllTerminalSessions(); },
+    onBrowserActivate: () => {
+      void refreshLiveBrowserState(false).then(() => { syncBrowserViewportToStage(false); });
+      startLiveBrowserStream();
+    },
+    onBrowserDeactivate: stopLiveBrowserStream,
+    onBrowserClose: () => { void closeBrowserWorkspace(); },
+    onLayoutResized: () => {
+      fitActiveTerminal();
+      syncBrowserViewportToStage(false);
+    }
   });
   configureStudioStartCallbacks({
     openNewTerminal: openNewTerminalSession,
@@ -155,7 +174,7 @@ function wireModuleCallbacks(): void {
     openInCanvas,
     openBrowserUrl,
     openBrowserArtifact,
-    openSettingsForUpgrade: openSettingsModal,
+    openSettingsForUpgrade: () => openSettingsModal('billing'),
     submitPrompt
   });
   configureComposerCallbacks({
@@ -216,9 +235,6 @@ function bindShellAndNavigationEvents(): void {
   dom.studioSplitCloseBtn?.addEventListener('click', () => toggleStudioSplit(false));
   if (dom.studioExpandBtn) dom.studioExpandBtn.addEventListener('click', toggleStudioMaximize);
   dom.studioCloseBtn.addEventListener('click', closeStudio);
-  document.querySelectorAll('.studio-tab').forEach((btn) => {
-    btn.addEventListener('click', () => setStudioTab(btn.getAttribute('data-tab') || 'start'));
-  });
 
   dom.plusBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -259,13 +275,19 @@ function bindShellAndNavigationEvents(): void {
 
   document.addEventListener('keydown', (e) => {
     if (document.activeElement === dom.liveViewportSurface && state.liveBrowserActive) return;
-    if (document.activeElement === dom.termViewport && state.activeTerminalId) return;
+    const inTerminal = Boolean(
+      dom.termViewport
+      && document.activeElement
+      && dom.termViewport.contains(document.activeElement)
+      && state.activeTerminalId
+    );
+    if (inTerminal && !(e.ctrlKey && !e.metaKey && !e.altKey && e.key === '`')) return;
     const mod = e.metaKey || e.ctrlKey;
     if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === '`') {
       e.preventDefault();
       openStudio('terminal');
       if (state.terminalSessions.length === 0) void openNewTerminalSession();
-      else dom.termInput?.focus();
+      else focusActiveTerminal();
     } else if (mod && e.altKey && e.key.toLowerCase() === 'p') {
       e.preventDefault();
       openStudio('files');
@@ -317,7 +339,7 @@ function startBackgroundPollers(): void {
     if (
       state.activeController
       && dom.appEl.classList.contains('studio-open')
-      && state.studioTab === 'browser'
+      && isStudioTabVisible('browser')
       && state.browserEngine === 'agent'
       && !state.liveStreamConnected
     ) {
@@ -338,6 +360,7 @@ function bootstrap(): void {
   restoreStudioLayoutPreference();
   wireModuleCallbacks();
   bindStudioResizer();
+  bindStudioSplitDivider();
   bindStudioStartEvents();
   bindFilesAndCanvasEvents();
   bindDiffPanelEvents();

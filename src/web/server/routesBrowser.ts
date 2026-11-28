@@ -226,13 +226,29 @@ export async function handleBrowserRoutes(
     }
     if (action === 'start') {
       ctx.setBrowserControlOwner('human');
-      const frame = await browser.captureLiveFrame({ ensureStarted: true });
+      let frame = await browser.captureLiveFrame({ ensureStarted: true });
+      const reqW = Number(body.width);
+      const reqH = Number(body.height);
+      if (frame.active && Number.isFinite(reqW) && Number.isFinite(reqH) && reqW >= 320 && reqH >= 240) {
+        const width = Math.max(320, Math.min(2560, Math.round(reqW)));
+        const height = Math.max(240, Math.min(1440, Math.round(reqH)));
+        try {
+          await browser.run([{ type: 'viewport', width, height }], { workspace: workspaceRoot });
+          frame = await browser.captureLiveFrame({ ensureStarted: false });
+        } catch {
+          // Keep started frame if viewport resize raced with close.
+        }
+      }
       sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...frame });
       return true;
     }
     if (action === 'close') {
-      await browser.close();
-      const frame = await browser.captureLiveFrame({ ensureStarted: false });
+      const frame = await browser.closeLiveSession();
+      ctx.broadcastBrowserNotice({
+        type: 'closed',
+        controlOwner: ctx.getBrowserControlOwner(),
+        ...frame
+      });
       sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...frame });
       return true;
     }
@@ -254,10 +270,21 @@ export async function handleBrowserRoutes(
           ? `https://${rawUrl}`
           : (expandSearchMacro('@duckduckgo_search', rawUrl) || `https://duckduckgo.com/?q=${encodeURIComponent(rawUrl)}`);
       }
-      await browser.run(
-        [action === 'newTab' ? { type: 'newTab', ...(rawUrl ? { url: rawUrl } : {}) } : { type: 'goto', url: rawUrl || 'about:blank' }],
-        { workspace: workspaceRoot }
-      );
+      const actions: Array<{ type: 'viewport'; width: number; height: number } | { type: 'newTab'; url?: string } | { type: 'goto'; url: string }> = [
+        action === 'newTab'
+          ? { type: 'newTab', ...(rawUrl ? { url: rawUrl } : {}) }
+          : { type: 'goto', url: rawUrl || 'about:blank' }
+      ];
+      const reqW = Number(body.width);
+      const reqH = Number(body.height);
+      if (Number.isFinite(reqW) && Number.isFinite(reqH) && reqW >= 320 && reqH >= 240) {
+        actions.push({
+          type: 'viewport',
+          width: Math.max(320, Math.min(2560, Math.round(reqW))),
+          height: Math.max(240, Math.min(1440, Math.round(reqH)))
+        });
+      }
+      await browser.run(actions, { workspace: workspaceRoot });
       const frame = await browser.captureLiveFrame({ ensureStarted: true });
       sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...frame });
       return true;
@@ -269,18 +296,40 @@ export async function handleBrowserRoutes(
       sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...frame });
       return true;
     }
-    if ((action === 'switchTab' || action === 'closeTab') && typeof body.tabId === 'string' && body.tabId.trim()) {
+    if (action === 'switchTab' && typeof body.tabId === 'string' && body.tabId.trim()) {
       ctx.setBrowserControlOwner('human');
-      await browser.run([{ type: action, tabId: body.tabId.trim() }], { workspace: workspaceRoot });
+      await browser.run([{ type: 'switchTab', tabId: body.tabId.trim() }], { workspace: workspaceRoot });
       const frame = await browser.captureLiveFrame({ ensureStarted: true });
       sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...frame });
       return true;
     }
+    if (action === 'closeTab' && typeof body.tabId === 'string' && body.tabId.trim()) {
+      ctx.setBrowserControlOwner('human');
+      const frame = await browser.closeLiveTab(body.tabId.trim());
+      if (!frame.active) {
+        ctx.broadcastBrowserNotice({
+          type: 'closed',
+          controlOwner: ctx.getBrowserControlOwner(),
+          ...frame
+        });
+      }
+      sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...frame });
+      return true;
+    }
     if (action === 'viewport') {
-      const width = Math.max(320, Math.min(1920, Number(body.width) || 1280));
-      const height = Math.max(480, Math.min(1200, Number(body.height) || 800));
-      await browser.run([{ type: 'viewport', width, height }], { workspace: workspaceRoot });
-      const frame = await browser.captureLiveFrame({ ensureStarted: true });
+      const pre = await browser.captureLiveFrame({ ensureStarted: false });
+      if (!pre.active) {
+        sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...pre });
+        return true;
+      }
+      const width = Math.max(320, Math.min(2560, Math.round(Number(body.width) || 1280)));
+      const height = Math.max(240, Math.min(1440, Math.round(Number(body.height) || 800)));
+      try {
+        await browser.run([{ type: 'viewport', width, height }], { workspace: workspaceRoot });
+      } catch {
+        // Browser closed concurrently during resize; return current closed state cleanly.
+      }
+      const frame = await browser.captureLiveFrame({ ensureStarted: false });
       sendJson(res, 200, { ok: true, controlOwner: ctx.getBrowserControlOwner(), ...frame });
       return true;
     }

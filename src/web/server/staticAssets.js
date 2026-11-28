@@ -1,6 +1,8 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 export const SKYBRIDGE_STYLESHEET_URLS = [
+    '/assets/vendor/xterm.css',
     '/assets/styles/tokens.css',
     '/assets/styles/shell.css',
     '/assets/styles/thread.css',
@@ -8,6 +10,10 @@ export const SKYBRIDGE_STYLESHEET_URLS = [
     '/assets/styles/composer.css',
     '/assets/styles/studio.css',
     '/assets/styles/overlays.css'
+];
+export const SKYBRIDGE_VENDOR_SCRIPT_URLS = [
+    '/assets/vendor/xterm.js',
+    '/assets/vendor/addon-fit.js'
 ];
 export const SKYBRIDGE_CLIENT_MODULE_FILES = [
     'types.js',
@@ -23,6 +29,7 @@ export const SKYBRIDGE_CLIENT_MODULE_FILES = [
     'filesAndCanvas.js',
     'diffPanel.js',
     'browserPanel.js',
+    'terminalTheme.js',
     'terminalPanel.js',
     'cliPanel.js',
     'gameLauncherUi.js',
@@ -36,6 +43,23 @@ export const SKYBRIDGE_CLIENT_MODULE_FILES = [
 ];
 const STATIC_ASSET_MAP = (() => {
     const map = new Map();
+    const req = createRequire(import.meta.url);
+    const vendorEntries = [
+        ['/assets/vendor/xterm.css', '@xterm/xterm/css/xterm.css', 'text/css; charset=utf-8'],
+        ['/assets/vendor/xterm.js', '@xterm/xterm/lib/xterm.js', 'text/javascript; charset=utf-8'],
+        ['/assets/vendor/addon-fit.js', '@xterm/addon-fit/lib/addon-fit.js', 'text/javascript; charset=utf-8']
+    ];
+    for (const [route, pkgSpecifier, contentType] of vendorEntries) {
+        try {
+            map.set(route, {
+                filePath: req.resolve(pkgSpecifier),
+                contentType
+            });
+        }
+        catch {
+            // Vendor asset unavailable in minimal test install; handled cleanly with 404.
+        }
+    }
     const styleFiles = [
         'tokens.css',
         'shell.css',
