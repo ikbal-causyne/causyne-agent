@@ -423,7 +423,18 @@ export const sysRun = {
     }
 
     return new Promise<SysRunResult>((resolve) => {
+      if (signal?.aborted) {
+        resolve({
+          success: false,
+          output: '',
+          error: 'Process killed by user.',
+          exitCode: 1
+        });
+        return;
+      }
+
       const { shell, shellArgs, isWin } = resolvePortableShell(executedCommand);
+      const detachedGroup = !isWin;
 
       let child: ReturnType<typeof spawn>;
       try {
@@ -453,8 +464,9 @@ export const sysRun = {
         const wrapped = wrapCommandWithOsSandbox(shell, shellArgs, wrapOptions);
         child = spawn(wrapped.command, wrapped.args, {
           cwd,
-          signal,
           env: getEnhancedEnv(),
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: detachedGroup,
           windowsHide: true,
           ...(isWin && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
         });
@@ -468,6 +480,28 @@ export const sysRun = {
         });
         return;
       }
+
+      const killChildTree = (force: boolean): void => {
+        const pid = child.pid;
+        if (pid) {
+          if (isWin) {
+            execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
+          } else {
+            const sig: NodeJS.Signals = force ? 'SIGKILL' : 'SIGTERM';
+            if (detachedGroup) {
+              try { process.kill(-pid, sig); } catch { /* fallback below */ }
+            }
+            try { child.kill(sig); } catch { /* ignore */ }
+          }
+        } else {
+          try { child.kill(force ? 'SIGKILL' : 'SIGTERM'); } catch { /* ignore */ }
+        }
+        if (force) {
+          try { child.stdout?.destroy(); } catch { /* ignore */ }
+          try { child.stderr?.destroy(); } catch { /* ignore */ }
+          try { child.unref(); } catch { /* ignore */ }
+        }
+      };
 
       // Preserve head (first 12KB) + tail (last 38KB) so error headers at the top survive long builds
       const MAX_LENGTH = 50_000;
@@ -564,9 +598,24 @@ export const sysRun = {
       }
 
       let settled = false;
+      const onAbort = (): void => {
+        if (isDetached || settled) return;
+        killChildTree(true);
+        finish({
+          success: false,
+          output: cleanSubprocessOutput(formatOutputBuffer()),
+          error: 'Process killed by user.',
+          exitCode: 1
+        });
+      };
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
       const finish = (result: SysRunResult): void => {
         if (settled) return;
         settled = true;
+        if (signal) signal.removeEventListener('abort', onAbort);
         if (timeoutId) clearTimeout(timeoutId);
         if (serverGraceTimer) clearTimeout(serverGraceTimer);
         resolve(result);
@@ -576,7 +625,7 @@ export const sysRun = {
       if (timeoutMs > 0) {
         timeoutId = setTimeout(() => {
           if (isDetached || settled) return;
-          child.kill('SIGKILL');
+          killChildTree(true);
           finish({
             success: false,
             output: cleanSubprocessOutput(formatOutputBuffer()),
