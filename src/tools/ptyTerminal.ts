@@ -1029,15 +1029,20 @@ export class PtyTerminalManager {
     const session = this.sessions.get(id);
     if (!session) return false;
     if (session.status === 'running') {
+      const proc = session.proc;
+      const detachedGroup = session.detachedGroup;
       if (session.transport === 'pty') {
-        try { session.proc.stdin.write(`${JSON.stringify({ t: 'close' })}\n`); } catch { /* ignore */ }
+        try { proc.stdin.write(`${JSON.stringify({ t: 'close' })}\n`); } catch { /* ignore */ }
       }
-      terminateChildTree(session.proc, session.detachedGroup, false);
+      terminateChildTree(proc, detachedGroup, false);
       setTimeout(() => {
-        if (session.status === 'running') {
-          terminateChildTree(session.proc, session.detachedGroup, true);
+        if (proc.exitCode === null && proc.signalCode === null) {
+          terminateChildTree(proc, detachedGroup, true);
         }
-      }, 600).unref?.();
+        try { proc.stdout?.destroy(); } catch { /* ignore */ }
+        try { proc.stderr?.destroy(); } catch { /* ignore */ }
+      }, 400).unref?.();
+      try { proc.unref(); } catch { /* ignore */ }
     }
     session.status = 'exited';
     session.subscribers.clear();
@@ -1048,6 +1053,9 @@ export class PtyTerminalManager {
   public closeAll(): void {
     for (const session of this.sessions.values()) {
       terminateChildTree(session.proc, session.detachedGroup, true);
+      try { session.proc.stdout?.destroy(); } catch { /* ignore */ }
+      try { session.proc.stderr?.destroy(); } catch { /* ignore */ }
+      try { session.proc.unref(); } catch { /* ignore */ }
       session.subscribers.clear();
     }
     this.sessions.clear();
